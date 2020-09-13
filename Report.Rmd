@@ -1,0 +1,441 @@
+---
+title: "Individual Project - Submission 1"
+author: "Ethan Shen"
+fontsize: 12pt
+geometry: "left=1.2cm,right=1.2cm,top=1.3cm,bottom=1.3cm"
+output: 
+  pdf_document:
+     latex_engine: xelatex
+     number_sections: true
+---
+
+```{r, function checking for installed packages, include=FALSE}
+# Validate that all necessary packaged have been downloaded, install otherwise or throw err package DNE
+pkgTest <- function(x)
+{
+  if (!require(x,character.only = TRUE))
+  {
+    install.packages(x,repos = "http://cran.r-project.org", dep=TRUE)
+    if(!require(x,character.only = TRUE)) stop("Package not found")
+  }
+}
+
+pkgTest("tidyverse")
+pkgTest("gridExtra")
+pkgTest("grid")
+pkgTest("kableExtra")
+```
+
+```{r include=FALSE}
+library(tidyverse)
+library(gridExtra)
+library(grid)
+library(kableExtra)
+knitr::opts_chunk$set(echo = FALSE,
+                      message = FALSE,
+                      warning = FALSE)
+ggplot2::theme_set(new = theme_bw())
+```
+
+```{r message=FALSE}
+load("league_df_final.Rdata")
+winner_data <- read_csv("586003-1093265-bundle-archive/match_winner_data_version1.csv")
+loser_data <- read_csv("586003-1093265-bundle-archive/match_loser_data_version1.csv")
+champions <- read_csv("riot_champion.csv") %>% select(name, key)
+
+league_df_final <- league_df_final %>% 
+  left_join(champions, by = c("championId" = "key"))
+
+# these are games where the botlane is recorded as duo, instead of duo_carry vs duo_support
+# filter these out
+duo_games <- league_df_final %>% 
+  filter(role == "DUO") %>% pull(rownum) %>% unique()
+
+league_df_final <- league_df_final %>% 
+  filter(! rownum %in% duo_games) 
+
+league_df_final <- league_df_final %>% 
+  mutate(role = case_when(
+    role == "DUO_SUPPORT" & lane == "BOTTOM" ~ "SUPPORT",
+    TRUE ~ lane)) %>% 
+  mutate(role = str_to_title(role),
+         role = factor(role, levels = c("Top", "Jungle", "Middle", "Bottom", "Support"))) 
+
+match_data <- bind_rows(winner_data, loser_data) %>% 
+  mutate(win = case_when(
+    win == "Fail" ~ "False",
+    win == "Win" ~ "True"
+  ))
+colnames(match_data)[str_detect(colnames(match_data), "first") | str_detect(colnames(match_data), "Kills")] <- paste0(colnames(match_data)[str_detect(colnames(match_data), "first") | str_detect(colnames(match_data), "Kills")], "_team")
+
+league_df_final <- league_df_final %>%
+  left_join(match_data %>% select(-vilemawKills_team, -dominionVictoryScore, -bans),
+            by = c("gameId", "teamId", "win")) 
+
+primary_role_df <- league_df_final %>% 
+  group_by(name, role) %>% 
+  summarise(n = n()) %>% 
+  arrange(name, desc(n)) %>% 
+  group_by(name) %>% 
+  top_n(1, wt = n) %>% 
+  rename(primary_role = role)
+
+league_df_final <- league_df_final %>%  
+  left_join(primary_role_df %>% select(primary_role), 
+            by = c("name")) %>% 
+  ungroup() %>% 
+  mutate(off_role = case_when(
+    role == primary_role ~ 1,  
+    role != primary_role ~ 0
+  ))
+```
+
+```{r}
+league_df_final <- league_df_final %>% 
+  ungroup() %>% 
+  group_by(rownum, teamId) %>% 
+  mutate(total_team_kills = sum(kills, na.rm=TRUE),
+         KP = (kills + assists) / total_team_kills,
+         KDA = ifelse(deaths == 0, kills + assists, (kills + assists) / deaths)) %>% 
+  ungroup() %>% 
+  mutate(CS = totalMinionsKilled + neutralMinionsKilled + neutralMinionsKilledTeamJungle + neutralMinionsKilledEnemyJungle) %>% 
+  select(rownum, gameMode, win, participantId...15,teamId,name,summonerName, 
+         role, primary_role, off_role, 
+         contains("_team"), 
+         contains("first"),
+         kills:pentaKills, -killingSprees,  total_team_kills, KP, KDA,
+         totalDamageDealtToChampions, totalHeal, totalUnitsHealed, damageSelfMitigated, damageDealtToObjectives, damageDealtToTurrets, timeCCingOthers, totalDamageTaken,
+         visionScore, visionWardsBoughtInGame, wardsPlaced, wardsKilled,
+         goldEarned, goldSpent, CS, 
+         gameDuration, 
+         (contains("delta") & !contains("Diff"))
+  ) %>% 
+  mutate(teamId = ifelse(teamId == 100, "blue", "red"))
+```
+
+# Introduction 
+
+League of Legends (LoL) is a multiplayer online battle arena game where two teams, typically composed of 5 players each, attempt to destroy the enemy team’s Nexus, a structure located in the heart of the base and protected by other defensive towers. Players pick from over 140 characters (known as “champions”), each with their own unique abilities. Champions cannot be changed while in game, and cannot be picked by more than one person in a game. 
+
+The game is played on Summoner's Rift, a square map where a Nexus is located on opposites of the map, in the lower-left and upper-right hand corners. The base in the lower-left corner is the blue side, and the other base is the red side. There are three lanes that connect the two bases; Top, Middle (Mid) and Bottom (Bot), and a Jungle that fills the space between the lanes. A picture of the map is in the Appendix. Players are thus assigned one of five unique roles^[[a]][Terminology]^, each corresponding with the lane they play in - typically, each lane (and the jungle) is occupied by one person, while only the Bottom lane is occupied by two players (Bot and Support)^[The names of the lanes and roles are the same and will be used interchangeably. For example, the player in Mid lane is known as the team's "Mid".]. 
+
+One important aspect of the game is the team’s champion composition. Professional teams consist of coaches and analysts who help with the development of team compositions; this process requires intense preparation and a detailed analysis of the opposing team. Often times, professional games are swayed heavily in favor for one team simply because their team composition synergizes better or has more teamfighting advantages than that of the enemy team.
+
+However, in a normal ranked solo-queue^[[b]][Terminology]^ game, teams generally consist of random players with limited in-game communication. Without reliable methods to discuss team compositions, solo-queue players may benefit from a champion ranking system, where a higher ranking may indicate that picking this champion can result in a higher chance of winning. This ranking system will be modeled using the Bradley-Terry model. Although the Bradley-Terry model is generally used to predict the outcome of a paired comparison, the pairwise rankings can be combined to derive a full ranking. 
+
+The project will examine the following questions: 1) With a lack of communication and pre-game considerations, how can solo-queue players determine the best champions to play and under which circumstances they should be picked? and 2) Which attributes, such as creep score (CS)^[[c]][Terminology]^, kill/death/assist ratio (KDA), champion role, and champions on the enemy team, are the most significant features when determining a champion's overall rank?
+
+# Literature Review 
+
+The Bradley-Terry model has numerous applications. In the Bayesian setting, a generalized version that allows for ties in pairwise comparison was used to rate chess players^[[1]][References]^ and a hierarchical version was used to rank MLB teams^[[2]][References]^. The model has also been applied to LoL data, but was used to predict match results^[[3]][References]^, rather than to provide champion rankings.
+
+# Data
+
+The original data includes 108,829 games in Korean solo-queue played in Master tier or higher played during Seasons 8-10, which were from 2018-2020. I downloaded the data from Kaggle, which was most likely scraped from Riot Games using their API^[[4]][References]^. Each game contains information about each of the 10 players, the champion they picked, and numeric attributes about each player’s performance.
+
+However, there are many inconsistencies with the players' recorded roles in original dataset. Like previously mentioned, teams consist of 5 players, each with a unique role - Top, Jungle, Mid, Bot, and Support. There are games where players' roles were either missing or recorded as *none*. In addition, Bot laners were initially labeled as one of three categories: *duo\_carry*, *duo\_support* and *duo*. The first two refer to the Bot and Support roles respectively, while *duo* does not clearly differentiate between Bot and Support. To understand the impact of the champion's role, I thus removed games where any player's role is missing or recorded as *none* or *duo*. This process results in the final dataset, which contains 31,909 games with 319,090 total observations.
+
+Each observation in the final dataset represents one champion, and its respective in-game and team-related statistics. Not all champions have the same number of recorded games; this will be discussed in the EDA.  
+
+The outcomes of this analysis should be generalizable to all players that are above Master tier. Although there may be slight regional differences, high-ranking players around the world generally perform at the same level. However, the results may be less applicable for low ranking players, who do not have the same understanding of the game as the players in this dataset. The difference in skill level and play style indicates that these champion rankings should not be generalized for low ranking players.
+
+## Description of Variables
+
+The response variable is the binary match outcome, *win*, where half of the 319090 observations are wins, and the other half are losses. Since there many potential predictors that may affect a champion's rank, I will group them and provide an explanation for each grouping. A more detailed description of these predictors is in the Appendix. There are two variables that are not grouped: *champion_name*, *teamId*. *champion_name* is the unique name for each champion, and *teamId* is a binary variable, where the category "blue" indicates that the player is on blue side and "red" indicates that the player is on red side.
+
+- **Role**: consists of categorical variables *role*, *primary_role*, and *off_role*. Another important aspect of the game is that while champions are better suited for certain roles, they can hypothetically be played in any of the five roles. For example, a champion with healing abilities, like Soraka, is almost always played as a Support, but can be played Top of Mid if the player chooses to do so. *primary_role* is thus the role that is most often played for a particular champion, and *off_role* is a binary variable where 1 indicates the *role* and  *primary_role* are the same and 0 if  they are different.
+- **Team Objectives**: categorical and numerical variables that indicate how many objectives^[[d]][Terminology]^ a team destroyed.
+- **Player Objectives**: binary variables that indicate whether this champion or team was the first to execute a certain play, such as the first champion kill or first objective destroyed.
+- **Kills**: numerical variables that consists of a champion's KDA and number of multi-kills (if a player kills multiple champions within 10 seconds of each other). 
+- **Damage Dealt, Taken and Healed**: numerical variables such as damage dealt to champions and structures, damage taken and damage healed. 
+- **Vision**: numeric variables suchas vision score and number of wards bought, placed and destroyed. Under normal circumstances, enemy territory cannot be seen. Wards give sight over a specific area, and can help track the location of enemy champions, especially the jungler.
+- **Gold**: numeric variables, such as *CS*, *turrets_killed*, and *total_gold_spent*, that describe how much gold a player has accumulated and spent throughout the game. 
+- **Time**: contains the length of the game (in minutes) and averaged statistics, such as average CS and average damage taken, over 10 minute intervals. This set of metrics can help assess if and how a player's performance changes throughout the game. 
+
+```{r eval=FALSE}
+# maybb add to second footnote: In instances where this naming convention may be confusing, I will specify the lane as "Mid lane" and the player as the "Mid laner".
+var_grp <- c("Kills and Kill Streaks", "Damage Dealt and Taken", "Vision",  "Gold")
+var_def <- c("number of kills, deaths and assists and any multi-kills",
+             "damage to champions, damage to structures, damage mitigated and damage taken")
+
+data.frame(
+  var_grp = var_grp,
+  var_def = var_def
+)
+```
+
+Below are visualizations that further examine the distribution of predictors that I believe will be significant when determining a champion's rank. 
+
+## Exploratory Data Analysis 
+
+```{r}
+popular_champs <- inner_join(
+  league_df_final %>% 
+    group_by(name, role) %>% 
+    summarise(n = n()) %>% 
+    arrange(name, desc(n)) %>% 
+    group_by(name) %>% 
+    top_n(1, wt = n),
+  league_df_final %>% 
+    group_by(name) %>% 
+    summarise(total_count = n()),  
+  by = "name"
+) %>% 
+  arrange(desc(total_count))
+```
+
+Figure 1 displays the 3 most and least played champions by number of recorded games. The y-axis shows the log number of games played while the numbers above each bar indicate the number of games played. The colors refer to these champions' *primary_role*. The most and least popular champions are both junglers - Lee Sin had the most games played (11859) and Udyr had the least (143). Figure 2 shows the distribution of the number of games a champion was played across different primary roles. The median number of games for Top, Mid, Bot and Support are above 1250, while that of Jungle is slightly below 1000 - this indicates that there is not a significant difference in number of games played across different primary roles, barring a few outliers. 
+
+```{r fig.align='center', fig.width=12}
+gridExtra::grid.arrange(
+  bind_rows(popular_champs %>% head(n = 3),
+            popular_champs %>% tail(n = 3)) %>% 
+    mutate(log_total_count = log(total_count)) %>%
+    ggplot(aes(x = reorder(name, -log_total_count), y = log_total_count)) + 
+    geom_col(aes(color = role, fill = role), alpha = 0.5) +
+    geom_text(aes(label=total_count), position=position_dodge(width=0.9), vjust=-0.5) +
+    ylim(0,10) + 
+    labs(title = "3 Most Popular and Least Popular Champions",
+         subtitle = "By Number of Games Played",
+         x = "Champion Name",
+         y = "Log Number of Games Played",
+         color = "Primary Role",
+         fill = "Primary Role",
+         caption = "Figure 1") +
+    theme(plot.caption = element_text(hjust = 0.5, vjust = -0.5, size = 16)
+          ,
+          axis.text.x = element_text(size = 8)
+          # axis.text.y = element_blank(),
+          # axis.ticks.y = element_blank()
+    ),
+  
+  popular_champs %>% 
+    ggplot() + 
+    geom_boxplot(aes(x = role, y = total_count)) + 
+    labs(title = "Number of Games Played per Champion by Role",
+         x = "Primary Role", 
+         y = "Number of Games Played",
+         caption = "Figure 2") +
+    theme(plot.caption = element_text(hjust = 0.5, vjust = -0.5, size = 16)),
+  ncol = 2
+)
+```
+
+```{r}
+p1 <- league_df_final %>% 
+  ggplot() + 
+  geom_boxplot(aes(x = role, y = log(CS))) + 
+  labs(x = "Primary Role", 
+       y = "Log Creep Score",
+       title = "Log Creep Score by Primary Role",
+       caption = "Figure 3") +
+  theme(plot.caption = element_text(hjust = 0.5, vjust = -0.5, size = 16))
+p2 <- league_df_final %>%
+  ggplot() + 
+  geom_boxplot(aes(x = role, y = log(totalDamageDealtToChampions))) + 
+  labs(x = "Primary Role", 
+       y = "Log Damage Dealt",
+       title = "Log Damage Dealt to Champions by Primary Role",
+       caption = "Figure 4") +
+  theme(plot.caption = element_text(hjust = 0.5, vjust = -0.5, size = 16))
+# generally, all roles are relatively the same, except  support (which is expected)
+#  low  values in top lane also make sense (tanks usually go top)
+```
+
+The next four figures display in-game attributes across different primary roles. Figure 3 displays log creep score (CS). Among Top laners, Junglers, Mid laners and Bot laners, the interquartile ranges of log CS largely overlap. Supports have the lowest median log CS - they are not actively looking to farm minions and usually only do so when the Bot laner is far away. Figure 4 shows log damage dealt to champions. Similarly, Top laners, Junglers, Mid laners and Bot laners have a similar median log damage dealt, while Supports have the lowest. Having a higher CS means having more gold to spend on items, which will generally increase a champion's damage output. 
+
+```{r fig.align='center', fig.width=12}
+gridExtra::grid.arrange(p1,p2,ncol=2)
+```
+
+```{r  fig.align='center', fig.width=12}
+kda_kp <- league_df_final %>% 
+  group_by(rownum, teamId) %>% 
+  mutate(total_team_kills = sum(kills, na.rm=TRUE),
+         KP = (kills + assists) / total_team_kills,
+         KDA = ifelse(deaths == 0, kills + assists, (kills + assists) / deaths)) %>% 
+  ungroup() %>% 
+  select(kills, deaths, assists, total_team_kills, KP, KDA, role) 
+gridExtra::grid.arrange(
+  kda_kp %>% 
+    ggplot() + 
+    geom_boxplot(aes(x = role, y = KP*100)) + 
+    labs(title = "Kill Participation by Primary Role",
+         x = "Primary Role", 
+         y = "Kill Participation (%)",
+         caption = "Figure 5") +
+    theme(plot.caption = element_text(hjust = 0.5, vjust = -0.5, size = 16)),
+  kda_kp %>% 
+    ggplot() + 
+    geom_boxplot(aes(x = role, y = log(KDA))) + 
+    labs(title = "Log Kill/Death/Assist Ratio by Primary Role",
+         x = "Primary Role", 
+         y = "Log KDA",
+         caption = "Figure 6") +
+    theme(plot.caption = element_text(hjust = 0.5, vjust = -0.5, size = 16)),
+  ncol=2)
+
+# generally expect jungle and support to have highest KP because they move around the map the most, expect  top to have the least because they are the most isolated lane
+
+```
+
+Figure 5 displays kill participation (KP). A champion's KP is the percentage of the sum of its kills and assists over the team's total number of kills, and a metric for a player's involvement and impact in the game. For all roles except Top, the interquartile ranges of KP largely overlap. Junglers and Supports have the highest median KP; these roles are the most likely to "gank" other lanes, which is the act of visiting another lane to surprise attack the enemy. Ganks often result in kills and assists, which contributes to a champion's KP. Top laners are more likely to play on an "island," which means they generally stay in their lane and participate less in team fights. This pattern is highlighted by Top laners having the lowest median KP among all roles.
+
+Figure 6 shows log kill/death/assist ratio (KDA). A champion's KDA is the ratio of the sum of its kills and assists to its number of deaths. If a champion does not die during a game, its KDA is the sum of its kills and assists. All five roles have similar interquartile ranges of log KDA, with Top Laners having a slightly lower median log KDA than the rest. This is because Top lane is generally the most ganked lane, so Top laners may die more often than other players 
+
+The distribution of different attributes among primary roles suggests that a hierarchical model should be used to consider *primary_role* level random effects. 
+
+```{r include=FALSE}
+league_df_final %>% 
+  group_by(summonerName) %>%  
+  count() %>% 
+  arrange(desc(n)) %>% 
+  ungroup() %>% 
+  summarize(Mean = mean(n),
+            `Std. Dev.` = var(n) %>% sqrt(),
+            Min = min(n),
+            `5%` = quantile(n, 0.05),
+            `50%` = median(n),
+            `95%` = quantile(n, 0.95),
+            Max = max(n)) %>% 
+  kableExtra::kable(booktabs = TRUE,
+                    caption = "Number of Games Played by Player") %>% 
+  kableExtra::kable_styling(latex_options = c("hold_position")) 
+
+percentile_players <- league_df_final %>% 
+  group_by(summonerName) %>%  
+  count() %>% 
+  ungroup() %>% 
+  mutate(percentile = percent_rank(n)) %>% 
+  distinct(n, .keep_all = TRUE) %>% 
+  arrange(n)
+
+
+## Table 1 displays the distribution of the number of games played by player. From the 31,909 games in the dataset, there are 71,692 unique players recorded. This distribution is heavily right skewed - `r (percentile_players %>% filter(n == 2) %>% pull(percentile) * 100) %>% round(2)`% of players are only recorded once, and `r (percentile_players %>% filter(n == 10) %>% pull(percentile) * 100) %>% round(2)`% of players have up to 10 games played. Because there are not a large amount of repeated performances by players, player-level random effects will not be considered. 
+
+```
+
+
+# Appendix 
+
+## References  
+
+1. Caron, F., & Doucet, A. (2012). Efficient Bayesian Inference for Generalized Bradley–Terry Models. Journal of Computational and Graphical Statistics, 21(1), 174-196. doi:10.1080/10618600.2012.638220 [http://www.stats.ox.ac.uk/~doucet/caron_doucet_bayesianbradleyterry.pdf](http://www.stats.ox.ac.uk/~doucet/caron_doucet_bayesianbradleyterry.pdf)
+
+2. Phelan, G. C., & Whelan, J. T. (2018). Hierarchical Bayesian Bradley–Terry for applications in Major League Baseball. Mathematics for Application, 7(1), 71-84. doi:10.13164/ma.2018.07 [https://arxiv.org/pdf/1712.05879.pdf](https://arxiv.org/pdf/1712.05879.pdf)
+
+3. Dae-Ki Kang and Myong-Jong Kim, "Poisson Model and Bradley terry Model for predicting multiplayer online battle games," 2015 Seventh International Conference on Ubiquitous and Future Networks, Sapporo, 2015, pp. 882-887, doi: 10.1109/ICUFN.2015.7182671. [https://ieeexplore.ieee.org/document/7182671](https://ieeexplore.ieee.org/document/7182671)
+
+4) Riot Developer Portal, [https://developer.riotgames.com/](https://developer.riotgames.com/).
+
+## Summoner's Rift 
+
+Below is a simplified version of the Summoner's Rift. 
+
+![](1920px-Map_of_MOBA.svg.png){width=300 height=300}
+
+## Terminology 
+
+a) **Champion Role** - Top, Jungle, Middle, Bottom, or Support, where the Bottom and Support play in the Bottom lane. Players will indicate their preferred role before the match-making system puts them in a game.  
+
+b)  **Solo-queue** - Whenever a person or a group of people queue up for the game. Solo-queue generally refers to ranked games. Playing ranked games will determine a player's Elo, which will rise and fall based on their overall win ratio.
+
+c) **Creep Score (CS)** - Killing (or farming) minions grant a player gold and experience. A player's CS is a running tally of the number of minions killed.
+
+d) **Objectives** - Objectives are creatures and objects on the map. These include towers, inhibitors, Rift Herald, Dragon, and Baron. Towers are defensive structures which provide gold when destroyed. There are a total of 22 towers (11 per team, 3 in each lane and two defending the Nexus). There are 6 inhibitors (3 per team). Once an Inhibitor has been destroyed, the lane it's destroyed in will start spawning Super Minions. These minions are harder to kill than regular minions. Killing a Rift Herald allows a player to summon it to a lane of your choice and use Herald's powers to destroy enemy towers at immense speeds. Slaying a Dragon gives a team bonuses which makes that team's champions stronger. Killing a Baron empowers a team's champions and nearby minions - it is considered one of the most important objectives in the game.
+
+## Detailed Description of Variables
+
+Ungrouped Variables: 
+
+- *champion_name*: the unique name of a champion 
+- *teamId*: binary variable where the category "blue" indicates that the player is on blue side and "red" indicates that the player is on red side
+
+**Role** 
+
+- *role*: Top, Jungle, Middle, Bottom, or Support, where the Bottom and Support play in the Bottom lane
+- *primary_role*: the role that is most often played for a particular champion; this can be different from the champion's *role* in a game
+- *off_role*: binary variable where 1 indicates the *role* and  *primary_role* are the same and 0 if they are different
+
+**Team Objectives**
+
+- *firstBlood_team*: True if team scored first blood (first kill), false if not
+- *firstTower_team*: True if team destroyed first tower, false if not 
+- *firstInhibitor_team*: True if team destroyed first inhibitor, false if not. Three inhibitors are located inside the base. Destroying an enemy inhibitor causes super minions to spawn in the lane, which are harder to kill than regular minions.
+- *firstBaron_team*: True if team destroyed first Baron, false if not. Baron is a neutral objective that makes champions and nearby minions stronger
+- *firstDragon_team*: True if team destroyed first Dragon, false if not. Dragon is a neutral objective that makes champions stronger
+- *firstRiftHerald_team*:  True if team destroyed first Rift Herald, false if not. Rift Herald is a neutral objective that helps destroy nearby towers
+- *towerKills_team*: total number of towers killed as a team
+- *inhibitorKills_team*: total number of inhibitors killed as a team. This number can be greater than 3, as inhibitors respawn every 5 minutes
+- *baronKills_team*: total number of Barons killed as a team
+- *dragonKills_team*: total number of Dragons killed as a team
+- *riftHeraldKills_team*: total number of Rift Heralds killed as a team 
+- *total_team_kills*: total number of champions killed as a team          
+
+**Player Objectives**
+
+- *firstBloodKill*: True if player scored first blood (first kill), false if not
+- *firstBloodAssist*: True if player assisted in scoring first blood (first kill), false if not
+- *firstTowerKill*: True if player destroyed first tower, false if not
+- *firstTowerAssist*: True if player assisted in destroying first tower, false if not
+- *firstInhibitorKill*: True if player destroyed first inhibitor, false if not
+- *firstInhibitorAssist*: True if player assisted in destroying first inhibitor, false if not       
+
+**Kills**
+
+- *kills*: number of enemy champions killed by a player
+- *deaths*: number of deaths by a player 
+- *assists*: number of assists by a player. Assists are recorded if a player damages an enemy champion that is soon killed or heals a champion on the same team.
+- *largestKillingSpree*: highest number of kills before dying
+- *largestMultiKill*: highest number of champions killed within 10 seconds of each other
+- *longestTimeSpentLiving*: longest time spent alive, in seconds 
+- *doubleKills*: number of double kills recorded (killing 2 enemy champions within 10 seconds of each other) 
+- *tripleKills*: number of triple kills recorded (killing 3 enemy champions within 10 seconds of each other)
+- *quadraKills*: number of quadra kills recorded (killing 4 enemy champions within 10 seconds of each other)
+- *pentaKills*: number of penta kills recorded (killing all enemy champions within 10 seconds of each other)
+- *KP*: kill participation
+- *KDA*: kill/death/assist ratio 
+
+**Damage Dealt, Taken and Healed**
+
+- *totalDamageDealtToChampions*:  total damage dealt to enemy champions
+- *totalHeal*: total amount of damage healed
+- *totalUnitsHealed*: total number of champions healed 
+- *damageSelfMitigated*: total amount of damage that was reduced by abilities or items
+- *damageDealtToObjectives*: total damage dealt to neutral objectives (Rift Herald, Dragon, Baron)
+- *damageDealtToTurrets*: total damage dealt to towers
+- *timeCCingOthers*: total time crowd controlling (CC) others. CC describes abilities or spells that remove or diminish the control a target unit has over aspects of itself. For example, stunning an enemy champion with an ability is "CCing" the enemy. 
+- *totalDamageTaken*: total amounnt of damage taken            
+
+**Vision**
+
+- *visionScore*: a post-game stat calculated by Riot Games. A higher vision score indicates the player either provided more vision or denied more vision, or both. You can provide vision by placing wards, and deny vision by destroying wards. 
+- *visionWardsBoughtInGame*: number of vision wards bought in the game
+- *wardsPlaced*: number of vision wards placed
+- *wardsKilled*: number of vision wards destroyed
+
+**Gold**
+
+- *goldEarned*: total amount of gold earned. Players earn gold from farming/killing minions, scoring champion kills, destroying turrets, killing neutral objectives, and automatically throughout the game.
+- *goldSpent*: total amount of gold spent
+- *CS*: total number of minions farmed/killed
+
+**Time**
+
+- *gameDuration*: length of the game, in seconds
+- *creepsPerMinDeltas 0-10*: average number of CS, between 0-10 minutes of the game
+- *creepsPerMinDeltas 10-20*: average number of CS, between 10-20 minutes of the game
+- *creepsPerMinDeltas 20-30*: average number of CS, between 20-30 minutes of the game
+- *creepsPerMinDeltas 30-end*: average number of CS, between 30 minutes and the end of the game
+- *xpPerMinDeltas 0-10*: average amount of experience gained, between 0-10 minutes of the game. Champions level up by gaining experience, which increase the power of their abilities.
+- *xpPerMinDeltas 10-20*: average amount of experience gained, between 10-20 minutes of the game
+- *xpPerMinDeltas 20-30*: average amount of experience gained, between 20-30 minutes of the game
+- *xpPerMinDeltas 30-end*: average amount of experience gained, between 30 minutes and the end of the game
+- *goldPerMinDeltas 0-10*: average amount of gold gained, between 0-10 minutes of the game
+- *goldPerMinDeltas 10-20*: average number of gold gained, between 10-20 minutes of the game
+- *goldPerMinDeltas 20-30*: average number of gold gained, between 20-30 minutes of the game
+- *goldPerMinDeltas 30-end*: average number of gold gained, between 30 minutes and the end of the game
+- *damageTakenPerMinDeltas 10-20*: average amount of damage taken, between 0-10 minutes of the game
+- *damageTakenPerMinDeltas 0-10*: average amount of damage taken, between 10-20 minutes of the game
+- *damageTakenPerMinDeltas 20-30*: average amount of damage taken, between 20-30 minutes of the game
+- *damageTakenPerMinDeltas 30-end*: average amount of damage taken, between 30 minutes and the end of the game
