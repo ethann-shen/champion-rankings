@@ -19,14 +19,6 @@ champions = read_csv("riot_champion.csv") %>%
 
 
 ```{r}
-# s = Sys.time()
-# load("participants.RData")
-# print(Sys.time() - s)
-# 
-# s = Sys.time()
-# league_df = sample_n(league, 100) %>%
-#   mutate(rownum = row_number())
-
 league_df = league %>%
   mutate(rownum = row_number())
 
@@ -181,4 +173,112 @@ if (file.exists("league_df_final.Rdata")) {
   
   save(league_df_final, file = "league_df_final.Rdata")
 }
+```
+
+```{r}
+champions <- read_csv("data/riot_champion.csv") %>% select(name, key)
+
+league_df_final <- league_df_final %>% 
+  left_join(champions, by = c("championId" = "key"))
+
+# these are games where the botlane is recorded as duo, instead of duo_carry vs duo_support
+# filter these out
+duo_games <- league_df_final %>% 
+  filter(role == "DUO") %>% pull(rownum) %>% unique()
+
+league_df_final <- league_df_final %>% 
+  filter(! rownum %in% duo_games) 
+
+league_df_final <- league_df_final %>% 
+  mutate(role = case_when(
+    role == "DUO_SUPPORT" & lane == "BOTTOM" ~ "SUPPORT",
+    TRUE ~ lane)) %>% 
+  mutate(role = str_to_title(role),
+         role = factor(role, levels = c("Top", "Jungle", "Middle", "Bottom", "Support")))
+
+
+primary_role_df <- league_df_final %>% 
+  group_by(name, role) %>% 
+  summarise(n = n()) %>% 
+  arrange(name, desc(n)) %>% 
+  group_by(name) %>% 
+  top_n(1, wt = n) %>% 
+  mutate(primary_role = role)
+
+league_df_final <- league_df_final %>%  
+  left_join(primary_role_df %>% select(primary_role), 
+            by = c("name")) %>% 
+  ungroup() %>% 
+  mutate(off_role = case_when(
+    role == primary_role ~ 1,  
+    role != primary_role ~ 0
+  ))
+
+save(league_df_final, file = "data/league_df_final.Rdata")
+```
+
+
+```{r champ-class, include=FALSE}
+url <- "https://leagueoflegends.fandom.com/wiki/List_of_champions"
+
+read_html(url) %>% 
+  html_nodes('table') %>% 
+  .[2] %>% 
+  html_table() %>% 
+  as.data.frame() %>% 
+  separate(col = Champion, into = c("name", "description"), sep = ",") %>% 
+  separate(col = name, into = c("name", "description"), sep = "the") %>% 
+  mutate(champ_class = Primary,
+         name = str_trim(name),
+         name = case_when(
+           name == "Pan" ~ "Pantheon",
+           TRUE ~ as.character(name)
+         )) %>% 
+  select(name,champ_class) %>% saveRDS("data/champ_class_df.Rds")
+```
+
+```{r champ-mastery, include=FALSE}
+bind_rows(readRDS("data/champ_mastery/champ_mastery.Rds"), #1-20000
+          readRDS("data/champ_mastery/champ_mastery2.Rds"), #20001-30000
+          readRDS("data/champ_mastery/champ_mastery3.Rds") #30001 onward
+) %>% 
+  group_by(summonerName, championId) %>% 
+  distinct() %>% 
+  arrange(desc(championPoints)) %>% 
+  top_n(1, championPoints) %>% 
+  ungroup() %>% saveRDS("data/final_champ_mastery.Rds")
+```
+
+```{r combining-data, include=FALSE}
+load("data/league_df_final.Rdata")
+readRDS("data/final_champ_mastery.Rds") %>% 
+  right_join(league_df_final %>% select(-summonerId),
+             by = c("summonerName",  "championId")) %>% 
+  arrange(rownum) %>% 
+  distinct() %>%  
+  left_join(readRDS("data/champ_class_df.Rds") %>% 
+              mutate(main_class = case_when(
+                champ_class %in% c("Enchanter", "Catcher") ~ "Controller",
+                champ_class %in% c("Juggernaut",  "Diver") ~ "Fighter",
+                champ_class %in% c("Burst",  "Battlemage", "Artillery") ~ "Mage",
+                champ_class %in% c("Assassin",  "Skirmisher") ~ "Slayer",
+                champ_class %in% c("Vanguard",  "Warden") ~ "Tank",
+                champ_class == "Marksman" ~ "Marksman",
+                champ_class == "Specialist" ~ "Specialist")
+              ), by = "name") %>% 
+  ungroup() %>% 
+  distinct() %>% 
+  group_by(rownum, teamId)  %>% 
+  mutate(team_comp = paste(sort(main_class), collapse = ", ")) %>% 
+  mutate(offensive = case_when(
+    main_class %in% c("Mage","Marksman","Fighter", "Slayer") ~ 1,
+    main_class == "Specialist" ~ 0.5,
+    main_class %in% c("Tank", "Controller") ~ 0
+  )) %>% 
+ 
+  mutate(team_comp_offensive = ifelse(sum(offensive) > 2.5, 1, 0))%>% 
+  left_join(readRDS("totalchampionmasteryscore.Rds"), 
+            by = "summonerId") %>% 
+  
+  saveRDS("final_data.Rds")
 ```

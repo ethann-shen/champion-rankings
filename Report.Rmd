@@ -3,6 +3,9 @@ title: "Individual Project - Submission 1"
 author: "Ethan Shen"
 fontsize: 12pt
 geometry: "left=1.2cm,right=1.2cm,top=1.3cm,bottom=1.3cm"
+indent: true
+header-includes:
+    - \usepackage{indentfirst}
 output: 
   pdf_document:
      latex_engine: xelatex
@@ -38,10 +41,10 @@ ggplot2::theme_set(new = theme_bw())
 ```
 
 ```{r message=FALSE}
-load("league_df_final.Rdata")
-winner_data <- read_csv("586003-1093265-bundle-archive/match_winner_data_version1.csv")
-loser_data <- read_csv("586003-1093265-bundle-archive/match_loser_data_version1.csv")
-champions <- read_csv("riot_champion.csv") %>% select(name, key)
+load("data/league_df_final.Rdata")
+#winner_data <- read_csv("586003-1093265-bundle-archive/match_winner_data_version1.csv")
+#loser_data <- read_csv("586003-1093265-bundle-archive/match_loser_data_version1.csv")
+champions <- read_csv("data/riot_champion.csv") %>% select(name, key)
 
 league_df_final <- league_df_final %>% 
   left_join(champions, by = c("championId" = "key"))
@@ -61,16 +64,16 @@ league_df_final <- league_df_final %>%
   mutate(role = str_to_title(role),
          role = factor(role, levels = c("Top", "Jungle", "Middle", "Bottom", "Support"))) 
 
-match_data <- bind_rows(winner_data, loser_data) %>% 
-  mutate(win = case_when(
-    win == "Fail" ~ "False",
-    win == "Win" ~ "True"
-  ))
-colnames(match_data)[str_detect(colnames(match_data), "first") | str_detect(colnames(match_data), "Kills")] <- paste0(colnames(match_data)[str_detect(colnames(match_data), "first") | str_detect(colnames(match_data), "Kills")], "_team")
+# match_data <- bind_rows(winner_data %>% select(-X1), loser_data %>% select(-X1)) %>% 
+#   mutate(win = case_when(
+#     win == "Fail" ~ "False",
+#     win == "Win" ~ "True"
+#   ))
+# colnames(match_data)[str_detect(colnames(match_data), "first") | str_detect(colnames(match_data), "Kills")] <- paste0(colnames(match_data)[str_detect(colnames(match_data), "first") | str_detect(colnames(match_data), "Kills")], "_team")
 
-league_df_final <- league_df_final %>%
-  left_join(match_data %>% select(-vilemawKills_team, -dominionVictoryScore, -bans),
-            by = c("gameId", "teamId", "win")) 
+# league_df_final <- league_df_final %>%
+#   left_join(match_data %>% select(-vilemawKills_team, -dominionVictoryScore),
+#             by = c("gameId", "teamId")) 
 
 primary_role_df <- league_df_final %>% 
   group_by(name, role) %>% 
@@ -78,7 +81,7 @@ primary_role_df <- league_df_final %>%
   arrange(name, desc(n)) %>% 
   group_by(name) %>% 
   top_n(1, wt = n) %>% 
-  rename(primary_role = role)
+  mutate(primary_role = role)
 
 league_df_final <- league_df_final %>%  
   left_join(primary_role_df %>% select(primary_role), 
@@ -95,7 +98,7 @@ league_df_final <- league_df_final %>%
   ungroup() %>% 
   group_by(rownum, teamId) %>% 
   mutate(total_team_kills = sum(kills, na.rm=TRUE),
-         KP = (kills + assists) / total_team_kills,
+         KP = ifelse(kills == 0 & assists == 0, 0, (kills + assists) / total_team_kills),
          KDA = ifelse(deaths == 0, kills + assists, (kills + assists) / deaths)) %>% 
   ungroup() %>% 
   mutate(CS = totalMinionsKilled + neutralMinionsKilled + neutralMinionsKilledTeamJungle + neutralMinionsKilledEnemyJungle) %>% 
@@ -110,7 +113,14 @@ league_df_final <- league_df_final %>%
          gameDuration, 
          (contains("delta") & !contains("Diff"))
   ) %>% 
-  mutate(teamId = ifelse(teamId == 100, "blue", "red"))
+  mutate(teamId = ifelse(teamId == 100, "blue", "red")) %>% 
+  mutate(win = case_when(
+    win == "False" ~ 0, 
+    win == "True" ~ 1
+  ),
+  win = as.factor(win))
+
+saveRDS(league_df_final, "data.Rds")
 ```
 
 # Introduction 
@@ -131,38 +141,24 @@ The Bradley-Terry model has numerous applications. In the Bayesian setting, a ge
 
 # Data
 
-The original data includes 108,829 games in Korean solo-queue played in Master tier or higher played during Seasons 8-10, which were from 2018-2020. I downloaded the data from Kaggle, which was most likely scraped from Riot Games using their API^[[4]][References]^. Each game contains information about each of the 10 players, the champion they picked, and numeric attributes about each player’s performance.
+The original data includes 108,829 games in Korean solo-queue played in Master tier or higher played during Seasons 8-10, which were from 2018-2020. I downloaded the data from Kaggle^[[4]][References]^, which was most likely scraped from Riot Games using their API^[[5]][References]^. Each game contains information about each of the 10 players, the champion they picked, and numeric attributes about each player’s performance.
 
-However, there are many inconsistencies with the players' recorded roles in original dataset. Like previously mentioned, teams consist of 5 players, each with a unique role - Top, Jungle, Mid, Bot, and Support. There are games where players' roles were either missing or recorded as *none*. In addition, Bot laners were initially labeled as one of three categories: *duo\_carry*, *duo\_support* and *duo*. The first two refer to the Bot and Support roles respectively, while *duo* does not clearly differentiate between Bot and Support. To understand the impact of the champion's role, I thus removed games where any player's role is missing or recorded as *none* or *duo*. This process results in the final dataset, which contains 31,909 games with 319,090 total observations.
-
-Each observation in the final dataset represents one champion, and its respective in-game and team-related statistics. Not all champions have the same number of recorded games; this will be discussed in the EDA.  
+However, there are many inconsistencies with the players' recorded roles in original dataset. Like previously mentioned, teams consist of 5 players, each with a unique role - Top, Jungle, Mid, Bot, and Support. There are games where players' roles were either missing or recorded as *none*. In addition, Bot laners were initially labeled as one of three categories: *duo\_carry*, *duo\_support* and *duo*. The first two refer to the Bot and Support roles respectively, while *duo* does not clearly differentiate between Bot and Support. I decided not to impute any missing or inconsistent data. Since champions can hypothetically be played in any role, imputation may not take that into consideration and could bring unwanted variability to the results. Thus, I removed games where any player's role is missing or recorded as *none* or *duo*. This process results in the final dataset, which contains 31,909 games with 319,090 total observations. Each observation in the final dataset represents one champion, and its respective in-game and team-related statistics. 
 
 The outcomes of this analysis should be generalizable to all players that are above Master tier. Although there may be slight regional differences, high-ranking players around the world generally perform at the same level. However, the results may be less applicable for low ranking players, who do not have the same understanding of the game as the players in this dataset. The difference in skill level and play style indicates that these champion rankings should not be generalized for low ranking players.
 
 ## Description of Variables
 
-The response variable is the binary match outcome, *win*, where half of the 319090 observations are wins, and the other half are losses. Since there many potential predictors that may affect a champion's rank, I will group them and provide an explanation for each grouping. A more detailed description of these predictors is in the Appendix. There are two variables that are not grouped: *champion_name*, *teamId*. *champion_name* is the unique name for each champion, and *teamId* is a binary variable, where the category "blue" indicates that the player is on blue side and "red" indicates that the player is on red side.
+The response variable is the binary match outcome, *win*, where half of the 319,090 observations are wins, and the other half are losses. Since there many predictors that may affect a champion's rank, I will group them and provide an explanation for each grouping. A more detailed description of these predictors is in the Appendix. There are two variables that are not grouped: *champion_name*, *teamId*. *champion_name* is the unique name for each champion, and *teamId* is a binary variable, where the category "blue" indicates that the player is on blue side and "red" indicates that the player is on red side.
 
 - **Role**: consists of categorical variables *role*, *primary_role*, and *off_role*. Another important aspect of the game is that while champions are better suited for certain roles, they can hypothetically be played in any of the five roles. For example, a champion with healing abilities, like Soraka, is almost always played as a Support, but can be played Top of Mid if the player chooses to do so. *primary_role* is thus the role that is most often played for a particular champion, and *off_role* is a binary variable where 1 indicates the *role* and  *primary_role* are the same and 0 if  they are different.
-- **Team Objectives**: categorical and numerical variables that indicate how many objectives^[[d]][Terminology]^ a team destroyed.
+- **Team Objectives**: categorical and numeric variables that indicate how many objectives^[[d]][Terminology]^ a team destroyed.
 - **Player Objectives**: binary variables that indicate whether this champion or team was the first to execute a certain play, such as the first champion kill or first objective destroyed.
-- **Kills**: numerical variables that consists of a champion's KDA and number of multi-kills (if a player kills multiple champions within 10 seconds of each other). 
-- **Damage Dealt, Taken and Healed**: numerical variables such as damage dealt to champions and structures, damage taken and damage healed. 
-- **Vision**: numeric variables suchas vision score and number of wards bought, placed and destroyed. Under normal circumstances, enemy territory cannot be seen. Wards give sight over a specific area, and can help track the location of enemy champions, especially the jungler.
+- **Kills**: numeric variables that consists of a champion's KDA and number of multi-kills (if a player kills multiple champions within 10 seconds of each other). 
+- **Damage Dealt, Taken and Healed**: numeric variables such as damage dealt to champions and structures, damage taken and damage healed. 
+- **Vision**: numeric variables such as vision score and number of wards bought, placed and destroyed. Under normal circumstances, enemy territory cannot be seen. Wards give sight over a specific area, and can help track the location of enemy champions, especially the jungler.
 - **Gold**: numeric variables, such as *CS*, *turrets_killed*, and *total_gold_spent*, that describe how much gold a player has accumulated and spent throughout the game. 
 - **Time**: contains the length of the game (in minutes) and averaged statistics, such as average CS and average damage taken, over 10 minute intervals. This set of metrics can help assess if and how a player's performance changes throughout the game. 
-
-```{r eval=FALSE}
-# maybb add to second footnote: In instances where this naming convention may be confusing, I will specify the lane as "Mid lane" and the player as the "Mid laner".
-var_grp <- c("Kills and Kill Streaks", "Damage Dealt and Taken", "Vision",  "Gold")
-var_def <- c("number of kills, deaths and assists and any multi-kills",
-             "damage to champions, damage to structures, damage mitigated and damage taken")
-
-data.frame(
-  var_grp = var_grp,
-  var_def = var_def
-)
-```
 
 Below are visualizations that further examine the distribution of predictors that I believe will be significant when determining a champion's rank. 
 
@@ -184,7 +180,7 @@ popular_champs <- inner_join(
   arrange(desc(total_count))
 ```
 
-Figure 1 displays the 3 most and least played champions by number of recorded games. The y-axis shows the log number of games played while the numbers above each bar indicate the number of games played. The colors refer to these champions' *primary_role*. The most and least popular champions are both junglers - Lee Sin had the most games played (11859) and Udyr had the least (143). Figure 2 shows the distribution of the number of games a champion was played across different primary roles. The median number of games for Top, Mid, Bot and Support are above 1250, while that of Jungle is slightly below 1000 - this indicates that there is not a significant difference in number of games played across different primary roles, barring a few outliers. 
+Figure 1 displays the 3 most and least played champions by number of recorded games. The y-axis shows the log number of games played while the numbers above each bar indicate the number of games played. The colors refer to these champions' *primary_role*. The most and least popular champions are both junglers - Lee Sin had the most games played (11,869) and Udyr had the least (143). Figure 2 shows the distribution of the number of games a champion was played across different primary roles. The median number of games for Top, Mid, Bot and Support are above 1250, while that of Jungle is slightly below 1000 - this indicates that there is not a significant difference in number of games played across different primary roles, barring a few outliers. 
 
 ```{r fig.align='center', fig.width=12}
 gridExtra::grid.arrange(
@@ -248,7 +244,7 @@ The next four figures display in-game attributes across different primary roles.
 gridExtra::grid.arrange(p1,p2,ncol=2)
 ```
 
-```{r  fig.align='center', fig.width=12}
+```{r}
 kda_kp <- league_df_final %>% 
   group_by(rownum, teamId) %>% 
   mutate(total_team_kills = sum(kills, na.rm=TRUE),
@@ -256,32 +252,33 @@ kda_kp <- league_df_final %>%
          KDA = ifelse(deaths == 0, kills + assists, (kills + assists) / deaths)) %>% 
   ungroup() %>% 
   select(kills, deaths, assists, total_team_kills, KP, KDA, role) 
-gridExtra::grid.arrange(
-  kda_kp %>% 
-    ggplot() + 
-    geom_boxplot(aes(x = role, y = KP*100)) + 
-    labs(title = "Kill Participation by Primary Role",
-         x = "Primary Role", 
-         y = "Kill Participation (%)",
-         caption = "Figure 5") +
-    theme(plot.caption = element_text(hjust = 0.5, vjust = -0.5, size = 16)),
-  kda_kp %>% 
-    ggplot() + 
-    geom_boxplot(aes(x = role, y = log(KDA))) + 
-    labs(title = "Log Kill/Death/Assist Ratio by Primary Role",
-         x = "Primary Role", 
-         y = "Log KDA",
-         caption = "Figure 6") +
-    theme(plot.caption = element_text(hjust = 0.5, vjust = -0.5, size = 16)),
-  ncol=2)
 
+p3 <- kda_kp %>% 
+  ggplot() + 
+  geom_boxplot(aes(x = role, y = KP*100)) + 
+  labs(title = "Kill Participation by Primary Role",
+       x = "Primary Role", 
+       y = "Kill Participation (%)",
+       caption = "Figure 5") +
+  theme(plot.caption = element_text(hjust = 0.5, vjust = -0.5, size = 16))
+p4 <- kda_kp %>% 
+  ggplot() + 
+  geom_boxplot(aes(x = role, y = log(KDA))) + 
+  labs(title = "Log Kill/Death/Assist Ratio by Primary Role",
+       x = "Primary Role", 
+       y = "Log KDA",
+       caption = "Figure 6") +
+  theme(plot.caption = element_text(hjust = 0.5, vjust = -0.5, size = 16))
+```
+
+```{r  fig.align='center', fig.width=12}
+gridExtra::grid.arrange(p3,p4,ncol=2)
 # generally expect jungle and support to have highest KP because they move around the map the most, expect  top to have the least because they are the most isolated lane
-
 ```
 
 Figure 5 displays kill participation (KP). A champion's KP is the percentage of the sum of its kills and assists over the team's total number of kills, and a metric for a player's involvement and impact in the game. For all roles except Top, the interquartile ranges of KP largely overlap. Junglers and Supports have the highest median KP; these roles are the most likely to "gank" other lanes, which is the act of visiting another lane to surprise attack the enemy. Ganks often result in kills and assists, which contributes to a champion's KP. Top laners are more likely to play on an "island," which means they generally stay in their lane and participate less in team fights. This pattern is highlighted by Top laners having the lowest median KP among all roles.
 
-Figure 6 shows log kill/death/assist ratio (KDA). A champion's KDA is the ratio of the sum of its kills and assists to its number of deaths. If a champion does not die during a game, its KDA is the sum of its kills and assists. All five roles have similar interquartile ranges of log KDA, with Top Laners having a slightly lower median log KDA than the rest. This is because Top lane is generally the most ganked lane, so Top laners may die more often than other players 
+Figure 6 shows log kill/death/assist ratio (KDA). A champion's KDA is the ratio of the sum of its kills and assists to its number of deaths. If a champion does not die during a game, its KDA is the sum of its kills and assists. All five roles have similar interquartile ranges of log KDA, with Top Laners having a slightly lower median log KDA than the rest. This is because Top lane is generally the most ganked lane, so Top laners may die more often than other players.
 
 The distribution of different attributes among primary roles suggests that a hierarchical model should be used to consider *primary_role* level random effects. 
 
@@ -326,7 +323,9 @@ percentile_players <- league_df_final %>%
 
 3. Dae-Ki Kang and Myong-Jong Kim, "Poisson Model and Bradley terry Model for predicting multiplayer online battle games," 2015 Seventh International Conference on Ubiquitous and Future Networks, Sapporo, 2015, pp. 882-887, doi: 10.1109/ICUFN.2015.7182671. [https://ieeexplore.ieee.org/document/7182671](https://ieeexplore.ieee.org/document/7182671)
 
-4) Riot Developer Portal, [https://developer.riotgames.com/](https://developer.riotgames.com/).
+4) League of Legends(LOL) - Ranked Games 2020, [https://www.kaggle.com/gyejr95/league-of-legendslol-ranked-games-2020-ver1](https://www.kaggle.com/gyejr95/league-of-legendslol-ranked-games-2020-ver1)
+
+5) Riot Developer Portal, [https://developer.riotgames.com/](https://developer.riotgames.com/).
 
 ## Summoner's Rift 
 
@@ -439,3 +438,10 @@ Ungrouped Variables:
 - *damageTakenPerMinDeltas 0-10*: average amount of damage taken, between 10-20 minutes of the game
 - *damageTakenPerMinDeltas 20-30*: average amount of damage taken, between 20-30 minutes of the game
 - *damageTakenPerMinDeltas 30-end*: average amount of damage taken, between 30 minutes and the end of the game
+
+
+
+
+$$
+\alpha
+$$

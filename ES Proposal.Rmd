@@ -1,0 +1,80 @@
+---
+title: "Project Proposal"
+author: "Ethan Shen"
+date: "8/28/2020"
+output: pdf_document 
+fontsize: 12pt
+geometry: "left=2cm,right=2cm,top=2cm,bottom=2cm"
+---
+
+# Introduction
+
+League of Legends (LoL) is a multiplayer online battle arena game where two teams, typically composed of 5 players each, attempt to destroy the enemy team’s Nexus, a structure located in the heart of the base and protected by other defensive towers. Players can pick from over 140 characters (known as “champions”), each with their own unique abilities. Champions cannot be changed while in game, and cannot be picked by more tha none person in a game. 
+
+One important aspect of the game is the team’s champion composition. Professional teams consist of coaches and analysts who help with the development of team compositions; this process requires intense preparation and a detailed analysis of the opposing team. Often times, professional games are swayed heavily in favor for one team simply because their team composition synergizes better or has more teamfighting advantages than that of the enemy team.
+
+However, in a normal ranked solo-queue^[[a]][Terminology]^ game, teams generally consist of random players with limited in-game communication. Without reliable methods to discuss team compositions, solo-queue players may benefit from a champion ranking system. A higher ranking may indicate that picking this champion can result in a higher chance of winning. In addition, the system can identify champions that synergize well or counter a specific champion, notifying players when it would be beneficial or detrimental to pick that champion.
+
+The project will examine the following questions:
+
+- With a lack of communication and pre-game considerations, how can solo-queue players determine the best champions to play and under which circumstances they should be picked?
+
+- Which in-game attributes, such as creep score (CS)^[[b]][Terminology]^, kills + assists/death (KDA) ratio and number of wards^[[c]][Terminology]^ placed, are the most significant features when determining a champion's overall rank?
+
+# Literature Review 
+
+The Bradley-Terry model has numerous applications. In the Bayesian setting, a generalized version that allows for ties in pairwise comparison was used to rate chess players^[[1]][References]^ and a hierarchical version was used to rank MLB teams^[[2]][References]^. The model has also been applied to LoL data, but the model was used to predict match results^[[3]][References]^, rather than to provide champion rankings.
+
+# Data
+
+The original data includes over 100,000 games in Korean solo-queue played in Master tier or higher. Each game also contains information about each of the 10 players, the champion they picked, and numeric attributes about each player’s performance. The transformed dataset will contain over 1,000,000 observations, where each row corresponds to a player and the champion they played in a specific game. I will also include columns that identify a champion’s synergies and counters. To determine synergies from the data, I will identify groups of champions that are often played together and win. Counters can be determined by identifying a list of champions, that when on the enemy team, will cause one’s champion to lose more frequently.
+
+# Methodology
+
+I will use a hierarchical Bayesian Bradley-Terry model to determine champion rankings. Although the Bradley-Terry model is generally used to predict the outcome of a paired comparison, the pairwise rankings can be combined to derive a full ranking. When incorporating covariates, I intend to add a hierarchical component based on the champion’s class, as determined by Riot Games^[[4]][References]^. For example, it can be argued that an assassin generally adds more value to a game than a tank, so a hierarchical model may better account for differences between classes.
+
+To identify suitable priors, I will reference the approach used by Whelan^[[5]][References]^, which discusses how to select prior distributions for the Bradley-Terry model.
+
+The goal of the ranking system is to help players recognize which champions perform the best and under what circumstances. An interesting application of the ranking system would be determining how win probabilities would change based on the swapping of a champion with another. For example, if my team composition currently consists of three tanks and two assassins, how would the win probability change if I switched a tank for an assassin? This can further show players which set of champions synergize well.
+
+# Limitations
+
+Limitations of this analysis include the lack of fully independent observations. Within each game, one player’s performance may impact that of another. This will inevitably affect the aggregated attributes for each champion. Additionally, a player’s performance may change over time. For example, a person playing their second game in the day may perform better than when they are playing their tenth consecutive game. However, this seems hard to identify, given the structure of the data.
+
+# References
+
+1. Caron, F., & Doucet, A. (2012). Efficient Bayesian Inference for Generalized Bradley–Terry Models. Journal of Computational and Graphical Statistics, 21(1), 174-196. doi:10.1080/10618600.2012.638220 [http://www.stats.ox.ac.uk/~doucet/caron_doucet_bayesianbradleyterry.pdf](http://www.stats.ox.ac.uk/~doucet/caron_doucet_bayesianbradleyterry.pdf)
+
+2. Phelan, G. C., & Whelan, J. T. (2018). Hierarchical Bayesian Bradley–Terry for applications in Major League Baseball. Mathematics for Application, 7(1), 71-84. doi:10.13164/ma.2018.07 [https://arxiv.org/pdf/1712.05879.pdf](https://arxiv.org/pdf/1712.05879.pdf)
+
+3. Dae-Ki Kang and Myong-Jong Kim, "Poisson Model and Bradley terry Model for predicting multiplayer online battle games," 2015 Seventh International Conference on Ubiquitous and Future Networks, Sapporo, 2015, pp. 882-887, doi: 10.1109/ICUFN.2015.7182671. [https://ieeexplore.ieee.org/document/7182671](https://ieeexplore.ieee.org/document/7182671)
+
+4. Kollar, Philip. “League of Legends Has a New, Detailed System of Classes and Subclasses.” The Rift Herald, The Rift Herald, 19 Apr. 2016. [www.riftherald.com/2016/4/19/11460542/league-of-legends-classes-subclasses-riot-games](www.riftherald.com/2016/4/19/11460542/league-of-legends-classes-subclasses-riot-games)
+
+5. Whelan, J.T. "Prior Distributions for the Bradley-Terry Model of Paired Comparisons." arXiv: Statistics Theory, 2017. [https://arxiv.org/pdf/1712.05311.pdf](https://arxiv.org/pdf/1712.05311.pdf)
+
+# Appendix
+
+## Terminology
+
+a)  **Solo-queue** - Whenever a person or a group of people queue up for the game. Solo-queue generally refers to ranked games. Playing ranked games will determine a player's Elo, which will rise and fall based on their overall win ratio.
+
+b) **Creep Score (CS)** - Killing minions grant a player gold and experience. A player's CS is a running tally of the number of minions killed.
+
+c) **Wards** - Under normal circumstances, enemy territory cannot be seen. Wards give sight / vision over a specific area, and can help track the location of enemy champions.
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, eval=FALSE}
+library(tidyverse)
+load("league_df_final.Rdata")
+champions = read_csv("riot_champion.csv") %>%
+  select(key, name)
+left_join(league_df_final,
+          champions,
+          by = c("championId" = "key")) %>% 
+  ungroup() %>% 
+  slice(1:3) %>%
+  select(name, gameDuration, kills, deaths, totalMinionsKilled) %>% 
+  knitr::kable()
+ 
+```
