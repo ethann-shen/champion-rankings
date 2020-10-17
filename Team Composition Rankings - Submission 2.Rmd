@@ -1,0 +1,669 @@
+---
+title: "Team Composition Rankings - Submission 2"
+author: "Ethan Shen"
+fontsize: 12pt
+geometry: "left=1.25cm,right=1.25cm,top=1.3cm,bottom=1.3cm"
+indent: true
+header-includes:
+    - \usepackage{indentfirst}
+output: 
+  pdf_document:
+     latex_engine: xelatex
+     number_sections: true
+---
+
+```{r, function checking for installed packages, include=FALSE}
+# Validate that all necessary packaged have been downloaded, install otherwise or throw err package DNE
+pkgTest <- function(x)
+{
+  if (!require(x,character.only = TRUE))
+  {
+    install.packages(x,repos = "http://cran.r-project.org", dep=TRUE)
+    if(!require(x,character.only = TRUE)) stop("Package not found")
+  }
+}
+```
+
+```{r include=FALSE}
+# Installing packages 
+pkgTest("tidyverse")
+pkgTest("BradleyTerry2")
+pkgTest("kableExtra")
+pkgTest("psych")
+pkgTest("broom")
+```
+
+```{r include=FALSE}
+library(tidyverse)
+library(BradleyTerry2)
+library(kableExtra)
+library(psych)
+library(broom)
+knitr::opts_chunk$set(echo = FALSE,
+                      message = FALSE,
+                      warning = FALSE)
+ggplot2::theme_set(new = theme_bw())
+```
+
+```{r}
+## Loading Data 
+final_data <- readRDS(file = "final_data.Rds")
+win_perc_tbl <- final_data %>% 
+  group_by(team_comp) %>% 
+  mutate(win_count = sum(ifelse(win == "True", 1, 0)) / 5,
+         comp_count = n()/5) %>% 
+  mutate(win_perc = round(win_count / comp_count, digits = 4)) %>% 
+  select(team_comp, win_perc, win_count, comp_count) %>% 
+  distinct()
+
+temp_bt_df <- final_data %>% 
+  ungroup() %>% 
+  mutate(d = row_number()) %>% 
+  select(d, win, team_comp) %>% 
+  mutate(win = case_when(
+    win == "False" ~ "loser", 
+    win == "True" ~ "winner"
+  )) %>% 
+  tidyr::spread(key=win, value = team_comp) 
+
+predictors <- final_data %>%
+  mutate(win = case_when(
+    win == "False" ~ 0,
+    win == "True" ~ 1
+  ) %>% as.factor()) %>%
+  ungroup() %>%
+  group_by(rownum, teamId) %>%
+  mutate(total_team_kills = sum(kills, na.rm=TRUE),
+         KP = ifelse(kills == 0 & assists == 0, 0, (kills + assists) / total_team_kills),
+         KDA = ifelse(deaths == 0, kills + assists, (kills + assists) / deaths)) %>%
+  ungroup() %>%
+  mutate(championPoints =  scale(championPoints),
+         lastPlayTime = scale(lastPlayTime),
+         totalChampion_mastery_score = scale(totalChampion_mastery_score),
+         chestGranted = ifelse(chestGranted == TRUE, 1, 0)
+  ) %>% 
+  mutate(gameId = rownum)
+
+contest <- bind_cols(
+  temp_bt_df %>% select(winner) %>% na.omit(),
+  temp_bt_df %>% select(loser) %>% na.omit()
+) %>% 
+  slice(which(row_number() %% 5 == 1)) 
+
+contest <- contest %>% 
+  mutate(winner = factor(winner, 
+                         levels = c(contest$winner, contest$loser) %>% unique() %>% sort()),
+         loser = factor(loser, 
+                        levels = c(contest$winner, contest$loser) %>% unique() %>% sort())
+  ) 
+
+BT_predictors <- predictors %>% 
+  select(win, championPoints, totalChampion_mastery_score, lastPlayTime, chestGranted, tokensEarned, KDA, KP, primary_role, team_comp,main_class) %>% 
+  mutate(team_comp = factor(team_comp,
+                            levels = c(as.character(contest$winner), as.character(contest$loser)) %>% unique() %>% sort()),
+         championPoints = scale(championPoints) %>% as.numeric(), 
+         totalChampion_mastery_score = scale(totalChampion_mastery_score) %>% as.numeric(), 
+         lastPlayTime = scale(lastPlayTime) %>% as.numeric())
+```
+
+```{r}
+bt_fit = function(model_fit, start, end) {
+  model_fit %>% BTabilities() %>% as.data.frame() %>% 
+    arrange(desc(ability)) %>%
+    tibble::rownames_to_column() %>%
+    inner_join(
+      win_perc_tbl,
+      by = c("rowname" = "team_comp")
+    ) %>%
+    mutate(team_comp = factor(rowname,
+                              levels = c(as.character(contest$winner),
+                                         as.character(contest$loser)) %>% unique() %>% sort())) %>%
+    mutate(comp_id = as.numeric(team_comp)) %>%
+    mutate(lower =  round(ability - `s.e.`,3),
+           upper =  round(ability + `s.e.`,3),
+           `95% CI` = paste0("(", lower, ", ", upper, ")") %>% stringr::str_trim(),
+           win_perc = win_perc*100,
+           ability = round(ability,3)) %>% 
+    #filter(win_count >= 20) %>% 
+    mutate(rownum = row_number()) %>%
+    slice(start:end) %>%
+    select(rownum, comp_id, ability, `95% CI`, win_perc) %>% 
+    rename(" " = rownum,
+           "Comp ID" = comp_id,
+           "Strength" = ability, 
+           "Win %" = win_perc)
+}
+```
+
+```{r}
+display_random_effects = function(mean_matrix, sd_matrix, model_num) {
+  bind_cols(
+    mean_matrix %>% as.data.frame(),
+    sd_matrix %>% as.data.frame()
+  ) %>% 
+    tibble::rownames_to_column() %>% 
+    mutate(rowname = str_remove_all(rowname, "\\.."),
+           team_comp = factor(rowname, 
+                              levels = c(contest$winner %>% as.character(), 
+                                         contest$loser%>% as.character()) %>% unique() %>% sort()),
+           comp_id = as.numeric(team_comp),
+           lower = mean-sd,
+           upper = mean+sd,
+           rownum = row_number()) %>% 
+    ggplot(aes(x = reorder(comp_id, mean), y = mean)) + 
+    geom_point(alpha = 0.7) + 
+    geom_errorbar(aes(ymin = lower, ymax = upper), width = 0.1, alpha = 0.5) + 
+    labs(title = paste0("Plot of Random Intercept Terms from Model ", model_num),
+         subtitle = "Point and Interval Estimates",
+         y = "Value", x = "Team Composition") + 
+    theme(
+      axis.text.x = element_blank(),
+      axis.ticks.x = element_blank()
+    )
+}
+```
+
+
+
+# Introduction 
+
+League of Legends (LoL) is a multiplayer online battle arena game where two teams, typically composed of 5 players each, attempt to destroy the enemy team’s Nexus, a structure located in the heart of the base and protected by other defensive towers. Players pick from over 140 characters (known as “champions”). Each champion is also assigned one of seven classes, which are groups of champions with similar styles. For example, tanks excel in soaking up damage from the enemy team more than being significant damage threats, while assassins are fragile but damage focused champions that look to swiftly take down an enemy.
+
+One important aspect of the game is the team’s champion composition. In general, a better team composition consists of champions of different classes, instead of a team of five tanks or five assassins. Professional teams consist of coaches and analysts who help with the development of team compositions; this process requires intense preparation and a detailed analysis of the opposing team. Often times, professional games are swayed heavily in favor for one team simply because their team composition synergizes better or has more teamfighting advantages than that of the enemy team.
+
+However, in a normal ranked solo-queue^[[a]][Terminology]^ game, teams generally consist of random players with limited in-game communication. Without reliable methods to discuss team compositions^[Team composition in this paper refers to the classes associated with the 5 champions on a team, rather than the names of the champions themselves.], solo-queue players may benefit from a team composition ranking system, where a higher ranking indicates that forming a specific team composition may result in a higher chance of winning. This ranking system will be modeled using the Bradley-Terry model [[1]][References]. Although the Bradley-Terry model is generally used to predict the outcome of a paired comparison, the pairwise rankings can be combined to derive a full ranking. 
+
+I will form two ranking systems: one that includes all unique team compositions, and one that includes the 50 most popular, in terms of games played. The project will thus examine the following questions: 1) How can solo-queue players determine the best classes of champions to play to form a strong team composition? and 2) Which player-level statistics are the most significant features when determining a team composition's overall rank? 
+
+# Literature Review 
+
+The Bradley-Terry model [[1]][References] has numerous applications. In the Bayesian setting, a generalized version that allows for ties in pairwise comparison was used to rate chess players [[2]][References], and a hierarchical version was used to rank MLB teams [[3]][References]. The model has also been applied to LoL data but was used to predict match results [[4]][References], rather than to provide team composition rankings.
+
+# Data
+
+The original data includes 108,829 games in Korean solo-queue played in Master tier or higher played during Seasons 8-10, which were from 2018-2020. I downloaded the data from Kaggle [[5]][References], which was most likely scraped from Riot Games using their API [[6]][References]. Each game contains information about each of the 10 players, the champion they picked, and numeric attributes about each player’s performance. However, there are many inconsistencies with the players' recorded roles^[[b]][Terminology]^ in original dataset, which are discussed further in the Appendix. After removing these consistencies, there were 31,909 games and 382 unique team compositions.  
+
+```{r}
+vars <- c("win", "championPoints**", "totalChampionMasteryScore**", "lastPlayTime**", "chestGranted", "tokensEarned", "KDA", "KP")
+var_descriptions <- c(
+  "Outcome of a Game",
+  "Amount of Experience a Player has with a Champion",
+  "Total Sum of a Player's championPoints",
+  "Last Time a Player Played a Champion",
+  "Whether the Player was Granted a Chest",
+  "Number of Tokens Earned",
+  "Kill + Assist/Death Ratio",
+  "Kill Percentages"
+)
+
+var_values <- c(
+   "0 (No), 1 (Yes)",
+  "-0.48 to 13.59",
+  "-1.87 to 3.94",
+  "-12.68 to 0.6",
+  "0 (No), 1 (Yes)",
+  "0, 1, 2, 3",
+  "0 to 57",
+  "0 to 1"
+)
+
+tibble(
+  vars = vars,
+  var_descriptions = var_descriptions,
+  var_values = var_values
+) %>% 
+  kable(caption = "Description of Variables (\\*** Indicates Variable was Mean-Centered and Standardized)", 
+        col.names = c("Variable", "Description", "Values"),
+                    booktabs = TRUE, align = "lll") %>% 
+  kable_styling(latex_options = c("hold_position"))  %>% 
+  kableExtra::pack_rows("Response", 1, 1) %>% 
+  kableExtra::pack_rows("Predictors", 2,8) 
+```
+
+From these games, I created two datasets: *contests* and *predictors*. *contests* has 31,909 rows, where each row records the winning and losing team compositions from each game.  *predictors* has 319,090 observations and contains different player-level statistics, which may vary across each game. The seven variables in the *predictors* dataset were chosen based on domain-driven knowledge, since a team's overall strength or ranking can be thought of as "the sum of its parts"; they are displayed in Table 1.  *championPoints* are accrued for each champion that a player has played, so a higher value indicates that a player has more experience with a specific champion. Each player will thus have a *championPoints* value for each champion they haved played, so *totalChampionMasteryScore* is the sum of a player's *championPoints* values. *lastPlayTime* is a timestamp that indicates the last time a player played a specific champion. *championPoints*, *totalChampionMasteryScore* and *lastPlayTime* were all mean-centered and standardized. In addition, players can be granted chests and earn tokens for a strong performance in a game. *chestGranted* is a binary variable, where 1 indicates the player was granted a chest and 0 if not, while *tokensEarned* is a numerical variable that indicates the number of tokens a player has earned. A player's *KDA* (kill/death/assist ratio) in a game is the ratio of the sum of its kills and assists to its number of deaths; if a player does not die during a game, its *KDA* is the sum of its kills and assists. A player's *KP* (kill participation) in a game is the percentage of the sum of its kills and assists over the team's total number of kills, and a metric for a player's involvement and impact in the game.
+
+## EDA 
+
+```{r}
+p1 <- win_perc_tbl %>% 
+  ggplot() + 
+  geom_histogram(aes(x = win_perc, y = ..density..), binwidth=0.025, colour="black", fill="white") + 
+  geom_density(aes(x = win_perc), alpha=.1, fill="#FF6666") + 
+  labs(title = "Distribution of Win Percentages",
+       x = "Win Percentage",
+       y = "Density",
+       caption = "Figure 1") +
+  theme(plot.caption = element_text(hjust = 0.5, vjust = -0.5, size = 16),
+        plot.title = element_text(size = 18)) 
+```
+
+```{r fig.width = 14, fig.height=3.5}
+# p2 <- BT_predictors %>%
+#   ggplot() + 
+#   geom_boxplot(aes(x = main_class, y = log(KDA))) + 
+#   labs(x = "Champion Class", 
+#        y = "Log KDA",
+#        title = "Log KDA by Champion Class",
+#        caption = "Figure 2") +
+#   theme(plot.caption = element_text(hjust = 0.5, vjust = -0.5, size = 16))
+
+
+p2 <- BT_predictors %>% 
+  ggplot() + 
+  geom_boxplot(aes(x = main_class, y = KP)) + 
+  labs(x = "Champion Class", 
+       y = "KP",
+       title = "KP by Champion Class",
+       caption = "Figure 2") +
+  theme(plot.caption = element_text(hjust = 0.5, vjust = -0.5, size = 16),
+        plot.title = element_text(size = 18)) 
+set.seed(201015)
+top5_teamcomps <- BT_predictors %>% group_by(team_comp) %>% summarise(n = n()/5) %>% arrange(desc(n)) %>% sample_n(5) %>% pull(team_comp)
+
+p3 <- BT_predictors %>% 
+  filter(team_comp %in% top5_teamcomps) %>% 
+  ggplot() + 
+  geom_boxplot(aes(x = team_comp, y = KDA %>% log()))
+
+p4 <- BT_predictors %>% 
+  filter(team_comp %in% top5_teamcomps) %>% 
+  ggplot() + 
+  geom_boxplot(aes(x = team_comp, y = chestGranted))
+
+
+p5 <- ggplot(data = BT_predictors %>% filter(!is.na(chestGranted)) %>% mutate(chestGranted = ifelse(chestGranted == 1, "Yes", "No")) %>% mutate(win = factor(ifelse(win == 1, "Win", "Loss"), levels = c("Win", "Loss"))), 
+             aes(fill = chestGranted %>% as.factor(), x = win) ) + 
+  geom_bar(position = "fill") + 
+  labs(title = "Distribution of Chests Granted by Game Outcome", x = "Game Outcome",
+       fill = "Chest Granted",
+       y = "Proportion",
+       caption = "Figure 3") +
+  theme(plot.caption = element_text(hjust = 0.5, vjust = -0.5, size = 16),
+        plot.title = element_text(size = 18)) 
+
+
+p6 <- ggplot(data = BT_predictors %>% filter(!is.na(chestGranted) & team_comp %in% top5_teamcomps) %>% mutate(chestGranted = ifelse(chestGranted == 1, "Yes", "No")),  
+             aes(fill = chestGranted %>% as.factor(), x = team_comp %>% as.numeric() %>% as.factor()) ) + 
+  geom_bar(position = "fill") + 
+  labs(title = "Distribution of Chests Granted by 5 Random Team Comps", x = "Team Composition",
+       fill = "Chest Granted",
+       y = "Proportion",
+       caption = "Figure 4") +
+  theme(plot.caption = element_text(hjust = 0.5, vjust = -0.5, size = 16),
+        plot.title = element_text(size = 18))   + theme(legend.position = "none")
+
+# p6 <- ggplot(data = BT_predictors %>% filter(!is.na(tokensEarned)) %>% mutate(win = factor(ifelse(win == 1, "Yes", "No"), levels = c("Yes", "No"))), 
+#              aes(x = tokensEarned %>% as.factor(), fill = win) ) + 
+#   geom_bar(position = "dodge") + 
+#   labs(title = "Distribution of Number of Tokens Earned", fill = "Win",
+#        x = "# of Tokens Earned",
+#        y = "Count",
+#        caption = "Figure 4") +
+#   theme(plot.caption = element_text(hjust = 0.5, vjust = -0.5, size = 16))
+```
+
+Figure 1 displays the distribution of win percentages across the different team compositions. Barring team compositions that have a 0% or 100% win rate, the win percentages are approximately normally distributed, with most teams having a win percentage of around 50%. The team compositions that have a 0% or 100% win rate are recorded either once or twice, which indicate that the rankings for these teams may have more variability and is one limitation with the dataset. 
+
+Figure 2 displays KP across different champion classes. The interquartile ranges of KP also largely overlap, while the median KP of Controllers is approximately 8% higher than the rest of the classes. Higher KP indicates more involvement in the game, which suggests that having a Controller on a team composition can increase the chances of winning. 
+
+Figures 3 displays the proportion of games where a chest is granted, based on game outcome. There is a slightly higher proportion of players who receive a chest if they win the game, although the proportions of earning a chest are around 0.75, regardless of the game outcome. Figure 4 displays the proportion of games where a chest is granted across five random team compositions. It is clear that there is variation across the different team compositions - composition 38  has the highest proportion of players that earn a chest, while compositions 30 and 51 have the lowest proportion. The difference in proportion between team compositions could indicate that *chestGranted* can be a significant predictor. 
+
+
+```{r fig.width = 14, fig.height=7.5, fig.align = 'center'}
+gridExtra::grid.arrange(p1,p2, p5, p6,ncol=2)
+```
+
+```{r fig.width = 14, fig.height=3.75, fig.align = 'center'}
+#gridExtra::grid.arrange(p5,p6,ncol=2)
+```
+
+# Methodology 
+
+## Bradley-Terry Model
+
+For two team compositions $i$ and $j$, Bradley and Terry [[1]][References] suggested the following model:
+
+$$
+\begin{aligned}
+Pr(i \ \text{beats}\  j) = \text{logit}^{-1} (\lambda_i - \lambda_j&), \\
+\text{logit}[Pr(i \ \text{beats}\  j)] = \lambda_i - \lambda_j,
+\end{aligned}
+$$
+where $\text{logit}^{-1}(\nu) = \frac{exp(\nu)}{1 + exp(\nu)}$ and  $\lambda_i \in \mathbb{R}$ represents a team composition's "strength" - a larger value of $\lambda_i$ indicates a higher ranking. I will be using the **BradleyTerry2** [[7]][References] package to implement this model; assuming independence between games, the parameters $\lambda_i$ are estimated by the maximum likelihood using an internal call to the **glm** function. In addition, **BradleyTerry2** allows for the inclusion of random intercepts so that the $\lambda_i$'s can be related to explanatory predictors through a linear predictor of the form 
+$$
+\lambda_i = \alpha_i + \sum_{r=1}^{p}\beta_rx_{ir} + \epsilon_i, 
+$$
+where the strength of each team composition $i \in (1, \dots, 382)$ is related to explanatory variables $x_{i1}, \ \dots \ ,x_{ip}$ through a linear predictor with coefficients $\beta_{1}, \ \dots \ ,\beta_{p}$. $\alpha_i$ is the random intercept term that allows for variability between team compositions and $\epsilon_i \sim N(0, \sigma^2)$ is the error term. 
+
+## Model and Variable Selection 
+
+I propose two different models, one that ranks all 382 team compositions, and another that ranks the 50 most popular team compositions (by games played). Like previously mentioned, the seven variables in the *predictors* dataset were chosen based on domain-driven knowledge. A pairs plot in the Appendix shows that there is no significant correlation between any of these variables. Since the **BradleyTerry2** package fits the models using **glm**, forward selection with AIC as the selection criterion was performed by fitting a logistic regression model that included all seven predictor variables and *win* as the response. This was performed twice, once for each model. The final models are below - Model 1 was fitted using all 382 team compositions and Model 2 was fitted using the 50 most popular team compositions.
+
+$$
+\begin{aligned}
+\lambda_i =  \alpha_i +  \beta_1 \, tokensEarned_{i1} +  \beta_2  \,  KP_{i2} &+ \epsilon_i, \\ 
+\epsilon_i \sim N(0, \sigma^2) \,\, \text{and} \, \, \alpha_i \sim N(0, \tau^2) && (1) \\\\
+\end{aligned}
+$$
+
+$$
+\begin{aligned}
+\lambda_i = \alpha_i + \beta_1 \, tokensEarned_{i1}   + \beta_2 \,chestGranted_{i 2} & +   \beta_3 \, KDA_{i3} + \epsilon_i,  \\ 
+\epsilon_i \sim N(0, \sigma^2) \, \, \text{and} \, \, \alpha_i \sim N(0, \tau^2)  && (2)
+\end{aligned}
+$$
+
+# Results 
+
+## All Team Compositions
+
+```{r}
+if (file.exists("BT_final.Rds")) {
+  BT_final = readRDS("BT_final.Rds")
+} else {
+  BT_final <- BTm(1, winner, loser, 
+                  ~ chestGranted[..] + 
+                    tokensEarned[..] + 
+                    KP[..] + 
+                    (1|..),
+                  data = list(contest,
+                              BT_predictors %>% na.omit()), 
+                  family = binomial(link = "logit")
+  )
+  
+  BT_final %>% saveRDS("BT_final.Rds")
+}
+
+list(
+  BT_final %>% bt_fit(1,5),
+  matrix(numeric(), nrow=0, ncol=1),
+  BT_final %>% bt_fit(6,10)
+) %>% 
+  kableExtra::kable(caption = "Top 10 Team Compositions by Strength, $\\hat{\\lambda}_i$ from Model 1 (All Comps)", 
+                     booktabs = TRUE, align = "c") %>% 
+  kableExtra::kable_styling(font_size = 10.5, latex_options = c("hold_position"))
+```
+Table 2 displays the top 10 team compositions - a table of the full team composition names and its corresponding ID is listed in the Appendix. From the strength values of these teams, it is hard to differentiate a clear winner: these values are relatively small and close to each other. This is primarily due to the fact that most teams have a win percentage of around 50%. Both of the top 2 teams, and compositions 75, 155, and 52 include a Controller - this suggests that players should include at least one Controller in their team composition. One interesting observation is that the top ranked team (19) has a 41.82% win rate. This may come as a surprise, but there were only 15 games played with team composition 19, and the majority of these games were much closer. The low win rate is not necessarily definitive of a team composition's strength, as the model also factors in other variables to create these overall rankings. In addition, from the table of coefficients that were obtained using Model 1, which is in the Appendix, it is clear that *chestGranted* is statistically significant, while *KP* is slightly significant. 
+
+Figure 5 displays the random intercept terms from Model 1 for each team composition. The mean of these random effects is 0 and the standard deviation is 0.039, though it is hard to tell from the plot. Reasons why the random effects could be so small could be due to a lack of recorded games for certain team compositions or because the majority of team compositions have around a 50% win rate, so it is hard for the Bradley-Terry model to differentiate between team compositions. 
+
+## 50 Most Popular Team Compositions
+
+```{r}
+final_data %>% group_by(team_comp) %>% count() %>% arrange(desc(n)) %>% head(50) %>% pull(team_comp) -> sample_comps50
+temp_bt_df50 <- final_data %>% 
+  ungroup() %>% 
+  #filter(team_comp %in% sample_comps) %>% 
+  mutate(d = row_number()) %>% 
+  select(d, win, team_comp) %>% 
+  mutate(win = case_when(
+    win == "False" ~ "loser", 
+    win == "True" ~ "winner"
+  )) %>% 
+  tidyr::spread(key=win, value = team_comp) 
+
+contest50 <- bind_cols(
+  temp_bt_df50 %>% select(winner) %>% na.omit(),
+  temp_bt_df50 %>% select(loser) %>% na.omit()
+) %>% 
+  filter(winner %in% sample_comps50 & loser %in% sample_comps50) %>% 
+  slice(which(row_number() %% 5 == 1)) 
+
+contest50 <- contest50 %>% 
+  mutate(winner = factor(winner, 
+                         levels = c(contest50$winner, contest50$loser) %>% unique() %>% sort()),
+         loser = factor(loser, 
+                        levels = c(contest50$winner, contest50$loser) %>% unique() %>% sort())
+  ) 
+
+BT_predictors50 <- BT_predictors %>% 
+  filter(team_comp %in% sample_comps50)
+```
+
+```{r}
+if (file.exists("BT_final50.Rds")) {
+  BT_final50 = readRDS("BT_final50.Rds")
+} else {
+  BT_final50 <- BTm(1, winner, loser,
+                    ~ chestGranted[..] + 
+                      tokensEarned[..] +
+                      KDA[..] + 
+                      (1|..),
+                    data = list(contest50,
+                                BT_predictors50 %>% na.omit()),
+                    family = binomial(link = "logit")
+  )
+  
+  BT_final50 %>% summary()
+  
+  BT_final50 %>% saveRDS("BT_final50.Rds")
+}
+
+list(
+  BT_final50 %>% bt_fit(1,5),
+  matrix(numeric(), nrow=0, ncol=1),
+  BT_final50 %>% bt_fit(6,10)
+) %>% 
+  kableExtra::kable(caption = "Top 10 Team Compositions by Strength, $\\hat{\\lambda}_i$ from Model 2 (50 Most Popular Comps)", 
+                     booktabs = TRUE, align = "c") %>% 
+  kableExtra::kable_styling(font_size = 10.5, latex_options = c("hold_position"))
+```
+
+Now, I ranked the 50 most popular team compositions, in terms of games played. Table 3 displays the top 10 team compositions. From the strength values of these teams, it is clear that composition 74 is the winner and there is also slightly more separation between the strength values for these 10 teams. This is primarily due to the increased number of games recorded for each team composition. There are now 6 (74, 75, 85, 61, 50, 60) team  compositions composed of at least one Controller, which once again indicates the strength of compositions that contain a Controller. In addition, from the table of coefficients that were obtained using Model 2, which is in the Appendix, it is once again clear that *chestGranted* is statistically significant, while *tokensEarned* and *KDA* are not as significant. 
+
+
+```{r fig.height=2.8}
+BT_final_random_means <- apply(BT_final$random , 2, mean) %>% as.matrix() 
+colnames(BT_final_random_means) <- "mean"
+BT_final_random_sds <- apply(BT_final$random , 2, sd) %>% as.matrix() 
+colnames(BT_final_random_sds) <- "sd"
+
+re1 <- display_random_effects(BT_final_random_means,BT_final_random_sds,1) + 
+  labs(caption = "Figure 5") +
+  theme(plot.caption = element_text(hjust = 0.5, vjust = -0.5, size = 16),
+        plot.title = element_text(size = 18)) 
+```
+
+```{r fig.height=2.8}
+BT_final50_random_means <- apply(BT_final50$random , 2, mean) %>% as.matrix() 
+colnames(BT_final50_random_means) <- "mean"
+BT_final50_random_sds <- apply(BT_final50$random , 2, sd) %>% as.matrix() 
+colnames(BT_final50_random_sds) <- "sd"
+
+re2 <- display_random_effects(BT_final50_random_means,BT_final50_random_sds,2) + 
+  labs(caption = "Figure 6") +
+  theme(plot.caption = element_text(hjust = 0.5, vjust = -0.5, size = 16),
+        plot.title = element_text(size = 18)) 
+```
+
+```{r fig.width = 14, fig.align = 'center'}
+gridExtra::grid.arrange(re1,re2,ncol=2)
+```
+
+
+Figure 6 displays the random intercept terms from Model 2 for each team composition. The mean of these random effects is 0 and the standard deviation is 0.0189, though it is once again hard to tell from the plot. The standard deviation of these random effects is even smaller than that of the previous model - this is because the 50 most popular team compositions have win percentages betwen 44% and 55%. Thus, it is even harder for the Bradley-Terry model to make out significant differences between these team compositions. 
+
+
+## Model Diagnostics 
+
+"Team-composition"-level residuals are examined for both models 1 and 2, and are useful diagnostics on the linear predictor $\sum\beta_rx_{ir}$ [[7]][References]. In general, the residuals are randomly scattered about 0 and suggest that both models are fitting the data relatively well. In the residual plot for Model 1, the majority of the positive residuals are team compositions that had a win rate above 0.5. This could be due to the lack of games recorded for certain team compositions that led to highly variable estimates. However, the residuals for Model 2 are much smaller and more randomly scattered in terms of win percentage. This indicates that having more data about each team composition or less team compositions to rank can generate more precise results.  
+
+```{r}
+BT_final_resids <- residuals(BT_final, type = "grouped")
+r1 <- BT_final_resids %>% 
+  as.data.frame() %>% 
+  tibble::rownames_to_column() %>% 
+  mutate(rowname = str_remove_all(rowname, "\\..")) %>%
+  inner_join(
+    win_perc_tbl,
+    by = c("rowname" = "team_comp")
+  ) %>% 
+  mutate(more_wins = ifelse(win_perc >= 0.5, "Yes", "No"),
+         more_wins = factor(more_wins, levels = c("Yes", "No")))%>% 
+  mutate(index = row_number()) %>% 
+ggplot(aes(x = index, y = V1, color = more_wins)) +
+  geom_jitter(height = 1) + 
+  labs(title = "Residual Plot for Model 1",
+       x = "Index", y = "Residual",
+       color = "0.5 Win Rate")  + theme(legend.position = "none")
+```
+
+```{r}
+BT_final50_resids <- residuals(BT_final50, type = "grouped")
+r2 <- BT_final50_resids %>% 
+  as.data.frame() %>% 
+  tibble::rownames_to_column() %>% 
+  mutate(rowname = str_remove_all(rowname, "\\..")) %>%
+  inner_join(
+    win_perc_tbl,
+    by = c("rowname" = "team_comp")
+  ) %>% 
+  mutate(more_wins = ifelse(win_perc >= 0.5, "Yes", "No"),
+         more_wins = factor(more_wins, levels = c("Yes", "No")))%>% 
+  mutate(index = row_number()) %>% 
+ggplot(aes(x = index, y = V1, color = more_wins)) +
+  geom_jitter(height = 0.5) + 
+  labs(title = "Residual Plot for Model 2",
+       x = "Index", y = "Residual",
+       color = "0.5 Win Rate")
+```
+
+```{r fig.width = 12, fig.align = 'center'}
+gridExtra::grid.arrange(r1,r2,ncol=2)
+```
+
+# Moving Forward
+
+## Sensitivity Analysis 
+
+The sensitivity analysis I have planned is terms of variable selection. In the beginning, I mentioned that the 7 predictors selected were domain-driven; however, the initial Kaggle dataset contains over 50 additional player-level statistics. I will check if any additional relevant player-level variables will improve the ranking system. In addition, I will investigate the effect of adding or removing by performing ANOVA tests. Hopefully, this will indicate that the variables I have chosen are valid. In addition, it will be interesting to test out possible interaction effects, or other transformations for the current predictors in the model. 
+
+## Discussion  
+
+Some discussion of the first research question has already been discussed (Controllers seem to improve a team composition). However, I think it could also be interesting to rank team compositions that only differ by one champion class; for example, comparing team composition A (Controller, Assassin, Assassin, Tank, Tank) to team composition B (Mage, Assassin, Assassin, Tank, Tank). I think this will give more clarity on which champion class players should choose to form out a strong team composition. 
+
+# Appendix 
+
+## References  
+
+\noindent
+1). Bradley, R., and Terry, M. (1952). Rank analysis of incomplete block desings: The method of paired comparisons.
+Biometrika 39, 324–345.
+
+\noindent
+2). Caron, F., & Doucet, A. (2012). Efficient Bayesian Inference for Generalized Bradley–Terry Models. Journal of Computational and Graphical Statistics, 21(1), 174-196. doi:10.1080/10618600.2012.638220 [http://www.stats.ox.ac.uk/~doucet/caron_doucet_bayesianbradleyterry.pdf](http://www.stats.ox.ac.uk/~doucet/caron_doucet_bayesianbradleyterry.pdf)
+
+\noindent
+3). Phelan, G. C., & Whelan, J. T. (2018). Hierarchical Bayesian Bradley–Terry for applications in Major League Baseball. Mathematics for Application, 7(1), 71-84. doi:10.13164/ma.2018.07 [https://arxiv.org/pdf/1712.05879.pdf](https://arxiv.org/pdf/1712.05879.pdf)
+
+\noindent
+4). Kang D., and Kim M. (2015). Poisson Model and Bradley terry Model for predicting multiplayer online battle games. Seventh International Conference on Ubiquitous and Future Networks, Sapporo, 2015, pp. 882-887, doi: 10.1109/ICUFN.2015.7182671. [https://ieeexplore.ieee.org/document/7182671](https://ieeexplore.ieee.org/document/7182671)
+
+\noindent
+5). League of Legends(LOL) - Ranked Games 2020, [https://www.kaggle.com/gyejr95/league-of-legendslol-ranked-games-2020-ver1](https://www.kaggle.com/gyejr95/league-of-legendslol-ranked-games-2020-ver1)
+
+\noindent
+6). Riot Developer Portal, [https://developer.riotgames.com/](https://developer.riotgames.com/).
+
+\noindent
+7). Turner H., and Firth D. (2020). Bradley-Terry Models in R: The BradleyTerry2 Package.  [https://cran.r-project.org/web/packages/BradleyTerry2/vignettes/BradleyTerry.pdf](https://cran.r-project.org/web/packages/BradleyTerry2/vignettes/BradleyTerry.pdf).
+
+## Terminology 
+
+\noindent
+a).  **Solo-queue** - Whenever a person or a group of people queue up for the game. Solo-queue generally refers to ranked games. Playing ranked games will determine a player's Elo, which will rise and fall based on their overall win ratio.
+
+\noindent
+b). **Champion Role** - Top, Jungle, Middle, Bottom, or Support, where the Bottom and Support play in the Bottom lane. Players will indicate their preferred role before the match-making system puts them in a game.  
+
+## Inconsistencies with Data 
+
+Teams consist of 5 players, each with a unique role - Top, Jungle, Mid, Bot, and Support. There are games where players' roles were either missing or recorded as *none*. In addition, Bot laners were initially labeled as one of three categories: *duo\_carry*, *duo\_support* and *duo*. The first two refer to the Bot and Support roles respectively, while *duo* does not clearly differentiate between Bot and Support. I decided not to impute any missing or inconsistent data. Since champions can hypothetically be played in any role, imputation may not take that into consideration and could bring unwanted variability to the results. Thus, I removed games where any player's role is missing or recorded as *none* or *duo*. This process results in the final dataset, which contains 31,909 games.
+
+## Pairs Plot 
+
+```{r fig.height=3.5, fig.align = 'center'}
+psych::pairs.panels(BT_predictors %>%
+                      select_if(is.numeric) %>% sample_n(1000), ellipses = FALSE) 
+```
+
+## Model Coefficients 
+
+```{r}
+BT_final %>% broom::tidy() %>% 
+  mutate(lower = estimate - 1.96*`std.error`,
+         upper = estimate + 1.96*`std.error`) %>% 
+  mutate_if(is.numeric, round, 3) %>% 
+  mutate("95% CI" = paste0("(", lower, ", ", upper, ")"),
+         term = str_remove_all(term, "\\[..]")) %>% 
+  select(term,estimate, `std.error`, `95% CI`, p.value) %>% 
+  kableExtra::kable(caption = "Coefficients obtained from Model 1", 
+                    col.names = c("Term", "Estimate", "Std. Error",  "95% CI", "p-value"),
+                    booktabs = TRUE, align = "c") %>% 
+  kableExtra::kable_styling(latex_options = "hold_position")
+BT_final50 %>% broom::tidy() %>% 
+  mutate(lower = estimate - 1.96*`std.error`,
+         upper = estimate + 1.96*`std.error`) %>% 
+  mutate_if(is.numeric, round, 3) %>% 
+  mutate("95% CI" = paste0("(", lower, ", ", upper, ")"),
+         term = str_remove_all(term, "\\[..]")) %>% 
+  select(term,estimate, `std.error`, `95% CI`, p.value) %>% 
+  kableExtra::kable(caption = "Coefficients obtained from Model 2", 
+                    col.names = c("Term", "Estimate", "Std. Error", "95% CI", "p-value"),
+                    booktabs = TRUE, align = "c") %>% 
+  kableExtra::kable_styling(latex_options = "hold_position")
+```
+
+## Table of Team Compositions and IDs
+
+```{r}
+comps_df <- BT_predictors %>% select(team_comp) %>% 
+  mutate(comp_id = as.numeric(team_comp), 
+         "Team Composition" = team_comp, 
+         "Comp ID" = comp_id) %>% 
+  distinct() %>% arrange(comp_id) %>% 
+  select("Team Composition", "Comp ID")
+  
+
+list(
+  comps_df %>% slice(1:50),
+  matrix(numeric(), nrow=0, ncol=1),
+  comps_df%>% slice(51:100)
+) %>% 
+  kableExtra::kable(caption = "Composition Names and IDs", 
+                     booktabs = TRUE, align = "c") %>% 
+  kableExtra::kable_styling(font_size = 8, latex_options = c("hold_position"))
+
+
+list(
+  comps_df %>% slice(101:150),
+  matrix(numeric(), nrow=0, ncol=1),
+  comps_df%>% slice(151:200)
+) %>% 
+  kableExtra::kable(caption = "Composition Names and IDs", 
+                     booktabs = TRUE, align = "c") %>% 
+  kableExtra::kable_styling(font_size = 8, latex_options = c("hold_position"))
+
+
+list(
+  comps_df %>% slice(201:250),
+  matrix(numeric(), nrow=0, ncol=1),
+  comps_df%>% slice(251:300)
+) %>% 
+  kableExtra::kable(caption = "Composition Names and IDs", 
+                     booktabs = TRUE, align = "c") %>% 
+  kableExtra::kable_styling(font_size = 8, latex_options = c("hold_position"))
+
+list(
+  comps_df %>% slice(301:350),
+  matrix(numeric(), nrow=0, ncol=1),
+  comps_df%>% slice(351:382)
+) %>% 
+  kableExtra::kable(caption = "Composition Names and IDs", 
+                     booktabs = TRUE, align = "c") %>% 
+  kableExtra::kable_styling(font_size = 7.5, latex_options = c("hold_position"))
+```
+
+
+
+
