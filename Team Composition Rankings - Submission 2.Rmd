@@ -29,6 +29,8 @@ pkgTest <- function(x)
 pkgTest("tidyverse")
 pkgTest("BradleyTerry2")
 pkgTest("kableExtra")
+pkgTest("grid")
+pkgTest("gridExtra")
 pkgTest("psych")
 pkgTest("broom")
 ```
@@ -37,6 +39,8 @@ pkgTest("broom")
 library(tidyverse)
 library(BradleyTerry2)
 library(kableExtra)
+library(grid)
+library(gridExtra)
 library(psych)
 library(broom)
 knitr::opts_chunk$set(echo = FALSE,
@@ -47,7 +51,8 @@ ggplot2::theme_set(new = theme_bw())
 
 ```{r}
 ## Loading Data 
-final_data <- readRDS(file = "final_data.Rds")
+final_data <- readRDS(file = "final_data_sub2.Rds")
+# final_data %>% select(-(largestKillingSpree:`damageTakenDiffPerMinDeltas 30-end`), -(X1:status.status_code)) %>% saveRDS("final_data_sub2.Rds")
 win_perc_tbl <- final_data %>% 
   group_by(team_comp) %>% 
   mutate(win_count = sum(ifelse(win == "True", 1, 0)) / 5,
@@ -171,7 +176,7 @@ League of Legends (LoL) is a multiplayer online battle arena game where two team
 
 One important aspect of the game is the team’s champion composition. In general, a better team composition consists of champions of different classes, instead of a team of five tanks or five assassins. Professional teams consist of coaches and analysts who help with the development of team compositions; this process requires intense preparation and a detailed analysis of the opposing team. Often times, professional games are swayed heavily in favor for one team simply because their team composition synergizes better or has more teamfighting advantages than that of the enemy team.
 
-However, in a normal ranked solo-queue^[[a]][Terminology]^ game, teams generally consist of random players with limited in-game communication. Without reliable methods to discuss team compositions^[Team composition in this paper refers to the classes associated with the 5 champions on a team, rather than the names of the champions themselves.], solo-queue players may benefit from a team composition ranking system, where a higher ranking indicates that forming a specific team composition may result in a higher chance of winning. This ranking system will be modeled using the Bradley-Terry model [[1]][References]. Although the Bradley-Terry model is generally used to predict the outcome of a paired comparison, the pairwise rankings can be combined to derive a full ranking. 
+However, in a normal ranked solo-queue^[[a]][Terminology]^ game, teams generally consist of random players with limited in-game communication. Without reliable methods to discuss team compositions^[Team composition in this paper refers to the classes associated with the 5 champions on a team, rather than the names of the champions themselves.], solo-queue players, like myself, may benefit from a team composition ranking system, where a higher ranking indicates that forming a specific team composition may result in a higher chance of winning. This ranking system will be modeled using the Bradley-Terry model [[1]][References]. Although the Bradley-Terry model is generally used to predict the outcome of a paired comparison, the pairwise rankings can be combined to derive a full ranking. 
 
 I will form two ranking systems: one that includes all unique team compositions, and one that includes the 50 most popular, in terms of games played. The project will thus examine the following questions: 1) How can solo-queue players determine the best classes of champions to play to form a strong team composition? and 2) Which player-level statistics are the most significant features when determining a team composition's overall rank? 
 
@@ -181,7 +186,7 @@ The Bradley-Terry model [[1]][References] has numerous applications. In the Baye
 
 # Data
 
-The original data includes 108,829 games in Korean solo-queue played in Master tier or higher played during Seasons 8-10, which were from 2018-2020. I downloaded the data from Kaggle [[5]][References], which was most likely scraped from Riot Games using their API [[6]][References]. Each game contains information about each of the 10 players, the champion they picked, and numeric attributes about each player’s performance. However, there are many inconsistencies with the players' recorded roles^[[b]][Terminology]^ in original dataset, which are discussed further in the Appendix. After removing these consistencies, there were 31,909 games and 382 unique team compositions.  
+The original data includes 108,829 games in Korean solo-queue played in Master tier or higher played during Seasons 8-10, which were from 2018-2020. I downloaded the data from Kaggle [[5]][References], which was most likely scraped from Riot Games using their API [[6]][References]. Each game contains information about each of the 10 players and numeric attributes about each player’s performance. However, there are many inconsistencies with the players' recorded roles^[[b]][Terminology]^ in original dataset, which are discussed further in the Appendix in section 7.3. After removing these consistencies, there were 31,909 games and 382 unique team compositions.  
 
 ```{r}
 vars <- c("win", "championPoints**", "totalChampionMasteryScore**", "lastPlayTime**", "chestGranted", "tokensEarned", "KDA", "KP")
@@ -276,7 +281,7 @@ p5 <- ggplot(data = BT_predictors %>% filter(!is.na(chestGranted)) %>% mutate(ch
   geom_bar(position = "fill") + 
   labs(title = "Distribution of Chests Granted by Game Outcome", x = "Game Outcome",
        fill = "Chest Granted",
-       y = "Proportion",
+       y = "Proportion of Games",
        caption = "Figure 3") +
   theme(plot.caption = element_text(hjust = 0.5, vjust = -0.5, size = 16),
         plot.title = element_text(size = 18)) 
@@ -287,7 +292,7 @@ p6 <- ggplot(data = BT_predictors %>% filter(!is.na(chestGranted) & team_comp %i
   geom_bar(position = "fill") + 
   labs(title = "Distribution of Chests Granted by 5 Random Team Comps", x = "Team Composition",
        fill = "Chest Granted",
-       y = "Proportion",
+       y = "Proportion of Games",
        caption = "Figure 4") +
   theme(plot.caption = element_text(hjust = 0.5, vjust = -0.5, size = 16),
         plot.title = element_text(size = 18))   + theme(legend.position = "none")
@@ -304,7 +309,7 @@ p6 <- ggplot(data = BT_predictors %>% filter(!is.na(chestGranted) & team_comp %i
 
 Figure 1 displays the distribution of win percentages across the different team compositions. Barring team compositions that have a 0% or 100% win rate, the win percentages are approximately normally distributed, with most teams having a win percentage of around 50%. The team compositions that have a 0% or 100% win rate are recorded either once or twice, which indicate that the rankings for these teams may have more variability and is one limitation with the dataset. 
 
-Figure 2 displays KP across different champion classes. The interquartile ranges of KP also largely overlap, while the median KP of Controllers is approximately 8% higher than the rest of the classes. Higher KP indicates more involvement in the game, which suggests that having a Controller on a team composition can increase the chances of winning. 
+Figure 2 displays KP across different champion classes. The interquartile ranges of KP largely overlap, while the median KP of Controllers is approximately 8% higher than the rest of the classes. Higher KP indicates more involvement in the game, which suggests that having a Controller on a team composition can increase the chances of winning. 
 
 Figures 3 displays the proportion of games where a chest is granted, based on game outcome. There is a slightly higher proportion of players who receive a chest if they win the game, although the proportions of earning a chest are around 0.75, regardless of the game outcome. Figure 4 displays the proportion of games where a chest is granted across five random team compositions. It is clear that there is variation across the different team compositions - composition 38  has the highest proportion of players that earn a chest, while compositions 30 and 51 have the lowest proportion. The difference in proportion between team compositions could indicate that *chestGranted* can be a significant predictor. 
 
@@ -337,18 +342,18 @@ where the strength of each team composition $i \in (1, \dots, 382)$ is related t
 
 ## Model and Variable Selection 
 
-I propose two different models, one that ranks all 382 team compositions, and another that ranks the 50 most popular team compositions (by games played). Like previously mentioned, the seven variables in the *predictors* dataset were chosen based on domain-driven knowledge. A pairs plot in the Appendix shows that there is no significant correlation between any of these variables. Since the **BradleyTerry2** package fits the models using **glm**, forward selection with AIC as the selection criterion was performed by fitting a logistic regression model that included all seven predictor variables and *win* as the response. This was performed twice, once for each model. The final models are below - Model 1 was fitted using all 382 team compositions and Model 2 was fitted using the 50 most popular team compositions.
+I propose two different models, one that ranks all 382 team compositions, and another that ranks the 50 most popular team compositions (by games played). Like previously mentioned, the seven variables in the *predictors* dataset were chosen based on domain-driven knowledge. A pairs plot in the Appendix in section 7.4 shows that there is no significant correlation between any of these variables. Since the **BradleyTerry2** package fits the models using **glm**, forward selection with AIC as the selection criterion was performed by fitting a logistic regression model that included all seven predictor variables and *win* as the response. This was performed twice, once for each model. The final models are below - Model 1 was fitted using all 382 team compositions and Model 2 was fitted using the 50 most popular team compositions.
 
 $$
 \begin{aligned}
-\lambda_i =  \alpha_i +  \beta_1 \, tokensEarned_{i1} +  \beta_2  \,  KP_{i2} &+ \epsilon_i, \\ 
+\lambda_i =  \alpha_i +  \beta_1 \, chestGranted_{i1} +  \beta_2  \,  KP_{i2} &+ \epsilon_i, \\ 
 \epsilon_i \sim N(0, \sigma^2) \,\, \text{and} \, \, \alpha_i \sim N(0, \tau^2) && (1) \\\\
 \end{aligned}
 $$
 
 $$
 \begin{aligned}
-\lambda_i = \alpha_i + \beta_1 \, tokensEarned_{i1}   + \beta_2 \,chestGranted_{i 2} & +   \beta_3 \, KDA_{i3} + \epsilon_i,  \\ 
+\lambda_i = \alpha_i + \beta_1 \, chestGranted_{i1}   + \beta_2 \,tokensEarned_{i 2} & +   \beta_3 \, KDA_{i3} + \epsilon_i,  \\ 
 \epsilon_i \sim N(0, \sigma^2) \, \, \text{and} \, \, \alpha_i \sim N(0, \tau^2)  && (2)
 \end{aligned}
 $$
@@ -383,9 +388,9 @@ list(
                      booktabs = TRUE, align = "c") %>% 
   kableExtra::kable_styling(font_size = 10.5, latex_options = c("hold_position"))
 ```
-Table 2 displays the top 10 team compositions - a table of the full team composition names and its corresponding ID is listed in the Appendix. From the strength values of these teams, it is hard to differentiate a clear winner: these values are relatively small and close to each other. This is primarily due to the fact that most teams have a win percentage of around 50%. Both of the top 2 teams, and compositions 75, 155, and 52 include a Controller - this suggests that players should include at least one Controller in their team composition. One interesting observation is that the top ranked team (19) has a 41.82% win rate. This may come as a surprise, but there were only 15 games played with team composition 19, and the majority of these games were much closer. The low win rate is not necessarily definitive of a team composition's strength, as the model also factors in other variables to create these overall rankings. In addition, from the table of coefficients that were obtained using Model 1, which is in the Appendix, it is clear that *chestGranted* is statistically significant, while *KP* is slightly significant. 
+Table 2 displays the top 10 team compositions - a table of the full team composition names and its corresponding ID is listed in the Appendix in section 7.6. From the strength values of these teams, it is hard to differentiate a clear winner: these values are relatively small and close to each other. An important takeaway is that both of the top 2 teams, and compositions 75, 155, and 52 include a Controller - this suggests that players should include at least one Controller in their team composition. Another interesting observation is that the top ranked team (19) has a 41.82% win rate. This may come as a surprise, but the low win rate is not necessarily definitive of a team composition's strength, as the model also factors in other variables to create these overall rankings. In addition, from the table of coefficients that were obtained using Model 1, which is in the Appendix in section 7.5, it is clear that *chestGranted* is statistically significant, while *KP* is slightly significant. 
 
-Figure 5 displays the random intercept terms from Model 1 for each team composition. The mean of these random effects is 0 and the standard deviation is 0.039, though it is hard to tell from the plot. Reasons why the random effects could be so small could be due to a lack of recorded games for certain team compositions or because the majority of team compositions have around a 50% win rate, so it is hard for the Bradley-Terry model to differentiate between team compositions. 
+Figure 5 displays the random intercept terms from Model 1 for each team composition. The mean of these random effects is 0 and the standard deviation is 0.039, though it is hard to tell from the plot. In addition, the standard deviation of the random effect is statistically significant, as seen from the summary output of Model 1 in the Appendix in section 7.5. This is because there are team compositions that have vastly different win rates, so the Bradley-Terry model is able to differentiate between certain team compositions.
 
 ## 50 Most Popular Team Compositions
 
@@ -449,7 +454,7 @@ list(
   kableExtra::kable_styling(font_size = 10.5, latex_options = c("hold_position"))
 ```
 
-Now, I ranked the 50 most popular team compositions, in terms of games played. Table 3 displays the top 10 team compositions. From the strength values of these teams, it is clear that composition 74 is the winner and there is also slightly more separation between the strength values for these 10 teams. This is primarily due to the increased number of games recorded for each team composition. There are now 6 (74, 75, 85, 61, 50, 60) team  compositions composed of at least one Controller, which once again indicates the strength of compositions that contain a Controller. In addition, from the table of coefficients that were obtained using Model 2, which is in the Appendix, it is once again clear that *chestGranted* is statistically significant, while *tokensEarned* and *KDA* are not as significant. 
+Now, I ranked the 50 most popular team compositions, in terms of games played. Table 3 displays the top 10 team compositions. From the strength values of these teams, it is once again hard to differentiate a clear winner. There are now 6 (74, 75, 85, 61, 50, 60) team  compositions composed of at least one Controller, which once again indicates the strength of compositions that contain a Controller. In addition, from the table of coefficients that were obtained using Model 2, which is in the Appendix in section 7.5, it is once again clear that *chestGranted* is statistically significant, while *tokensEarned* and *KDA* are not as significant. 
 
 
 ```{r fig.height=2.8}
@@ -481,12 +486,11 @@ gridExtra::grid.arrange(re1,re2,ncol=2)
 ```
 
 
-Figure 6 displays the random intercept terms from Model 2 for each team composition. The mean of these random effects is 0 and the standard deviation is 0.0189, though it is once again hard to tell from the plot. The standard deviation of these random effects is even smaller than that of the previous model - this is because the 50 most popular team compositions have win percentages betwen 44% and 55%. Thus, it is even harder for the Bradley-Terry model to make out significant differences between these team compositions. 
-
+Figure 6 displays the random intercept terms from Model 2 for each team composition. The mean of these random effects is 0 and the standard deviation is 0.0189, though it is once again hard to tell from the plot. In addition, the standard deviation of the random effect is no longer statistically significant, as seen from the summary output of Model 2 in the Appendix in section 7.5. This is because the 50 most popular team compositions have win rates between 44% and 55%. Thus, it is harder for the Bradley-Terry model to make out significant differences between these team compositions. 
 
 ## Model Diagnostics 
 
-"Team-composition"-level residuals are examined for both models 1 and 2, and are useful diagnostics on the linear predictor $\sum\beta_rx_{ir}$ [[7]][References]. In general, the residuals are randomly scattered about 0 and suggest that both models are fitting the data relatively well. In the residual plot for Model 1, the majority of the positive residuals are team compositions that had a win rate above 0.5. This could be due to the lack of games recorded for certain team compositions that led to highly variable estimates. However, the residuals for Model 2 are much smaller and more randomly scattered in terms of win percentage. This indicates that having more data about each team composition or less team compositions to rank can generate more precise results.  
+"Team-composition"-level residuals are examined for both models 1 and 2, and are useful diagnostics on the linear predictor $\sum\beta_rx_{ir}$ [[7]][References]. In general, the residuals are randomly scattered about 0 and suggest that both models are fitting the data relatively well. In the residual plot for Model 1, the majority of the positive residuals are team compositions that had a win rate above 0.5. This could be due to the lack of games recorded for certain team compositions that led to highly variable estimates. However, the residuals for Model 2 are much smaller and more randomly scattered in terms of win rate This indicates that having more data about each team composition or less team compositions to rank can generate more precise results.  
 
 ```{r}
 BT_final_resids <- residuals(BT_final, type = "grouped")
@@ -536,7 +540,7 @@ gridExtra::grid.arrange(r1,r2,ncol=2)
 
 ## Sensitivity Analysis 
 
-The sensitivity analysis I have planned is terms of variable selection. In the beginning, I mentioned that the 7 predictors selected were domain-driven; however, the initial Kaggle dataset contains over 50 additional player-level statistics. I will check if any additional relevant player-level variables will improve the ranking system. In addition, I will investigate the effect of adding or removing by performing ANOVA tests. Hopefully, this will indicate that the variables I have chosen are valid. In addition, it will be interesting to test out possible interaction effects, or other transformations for the current predictors in the model. 
+The sensitivity analysis I have planned is terms of variable selection. I will test different selection methods (for example, backward selection using BIC). In the beginning, I mentioned that the 7 predictors selected were domain-driven; however, the initial Kaggle dataset contains over 50 additional player-level statistics. I will check if any additional relevant player-level variables will improve the ranking system. In addition, I will investigate the effect of adding or removing by performing ANOVA tests. Hopefully, this will indicate that the variables I have chosen are valid. It could also be interesting to test out possible interaction effects, or other transformations for the current predictors in the model. 
 
 ## Discussion  
 
@@ -587,31 +591,33 @@ psych::pairs.panels(BT_predictors %>%
                       select_if(is.numeric) %>% sample_n(1000), ellipses = FALSE) 
 ```
 
-## Model Coefficients 
+## Model Summary and Coefficients 
 
 ```{r}
-BT_final %>% broom::tidy() %>% 
-  mutate(lower = estimate - 1.96*`std.error`,
-         upper = estimate + 1.96*`std.error`) %>% 
-  mutate_if(is.numeric, round, 3) %>% 
-  mutate("95% CI" = paste0("(", lower, ", ", upper, ")"),
-         term = str_remove_all(term, "\\[..]")) %>% 
-  select(term,estimate, `std.error`, `95% CI`, p.value) %>% 
-  kableExtra::kable(caption = "Coefficients obtained from Model 1", 
-                    col.names = c("Term", "Estimate", "Std. Error",  "95% CI", "p-value"),
-                    booktabs = TRUE, align = "c") %>% 
-  kableExtra::kable_styling(latex_options = "hold_position")
-BT_final50 %>% broom::tidy() %>% 
-  mutate(lower = estimate - 1.96*`std.error`,
-         upper = estimate + 1.96*`std.error`) %>% 
-  mutate_if(is.numeric, round, 3) %>% 
-  mutate("95% CI" = paste0("(", lower, ", ", upper, ")"),
-         term = str_remove_all(term, "\\[..]")) %>% 
-  select(term,estimate, `std.error`, `95% CI`, p.value) %>% 
-  kableExtra::kable(caption = "Coefficients obtained from Model 2", 
-                    col.names = c("Term", "Estimate", "Std. Error", "95% CI", "p-value"),
-                    booktabs = TRUE, align = "c") %>% 
-  kableExtra::kable_styling(latex_options = "hold_position")
+BT_final %>% summary()
+# %>% broom::tidy() %>% 
+#   mutate(lower = estimate - 1.96*`std.error`,
+#          upper = estimate + 1.96*`std.error`) %>% 
+#   mutate_if(is.numeric, round, 3) %>% 
+#   mutate("95% CI" = paste0("(", lower, ", ", upper, ")"),
+#          term = str_remove_all(term, "\\[..]")) %>% 
+#   select(term,estimate, `std.error`, `95% CI`, p.value) %>% 
+#   kableExtra::kable(caption = "Coefficients obtained from Model 1", 
+#                     col.names = c("Term", "Estimate", "Std. Error",  "95% CI", "p-value"),
+#                     booktabs = TRUE, align = "c") %>% 
+#   kableExtra::kable_styling(latex_options = "hold_position")
+BT_final50  %>% summary()
+# %>% broom::tidy() %>% 
+#   mutate(lower = estimate - 1.96*`std.error`,
+#          upper = estimate + 1.96*`std.error`) %>% 
+#   mutate_if(is.numeric, round, 3) %>% 
+#   mutate("95% CI" = paste0("(", lower, ", ", upper, ")"),
+#          term = str_remove_all(term, "\\[..]")) %>% 
+#   select(term,estimate, `std.error`, `95% CI`, p.value) %>% 
+#   kableExtra::kable(caption = "Coefficients obtained from Model 2", 
+#                     col.names = c("Term", "Estimate", "Std. Error", "95% CI", "p-value"),
+#                     booktabs = TRUE, align = "c") %>% 
+#   kableExtra::kable_styling(latex_options = "hold_position")
 ```
 
 ## Table of Team Compositions and IDs
