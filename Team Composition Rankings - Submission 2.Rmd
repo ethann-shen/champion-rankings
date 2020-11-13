@@ -671,9 +671,4 @@ list(
 ```
 
 
-```{r}
-data("flatlizards", package = "BradleyTerry2")
-flatlizards
-```
-
 
