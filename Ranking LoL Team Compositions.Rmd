@@ -617,32 +617,6 @@ In terms of team compositions with all offensive champions (no Controller or Tan
 
 ## Significant Player-level Predictors 
 
-```{r eval=FALSE}
-latex_predictors <- c("$\\Delta_{ijk}$CP", "$\\Delta_{ijk}MS$", "$\\Delta_{ijk}lastPlayTime$", "$\\Delta_{ijk}CP$ * $\\Delta_{ijk}MS$")
-gather_draws(ga_1_1_interactions, beta[i]) %>% 
-  ungroup() %>% 
-  filter(i > 382) %>%
-  mutate(param = ifelse(is.na(i), .variable, paste0("beta","[", i, "]"))) %>% 
-  group_by(param) %>% 
-  summarise(mean = mean(.value) %>% round(3),
-            lower = quantile(.value, .025) %>% round(3),
-            upper = quantile(.value, 0.975) %>% round(3)) %>% 
-  mutate(`95% CI` = paste0("(", lower, ", ", upper, ")") %>% stringr::str_trim(),
-         param = latex_predictors,
-         Parameter = param,
-         Estimate = mean) %>% 
-  select(Parameter,  Estimate,  `95% CI`) %>% 
-  kableExtra::kable(caption = "Coefficients for Player-Level Variables from (3)", 
-                    booktabs = TRUE, align = "c", escape = FALSE) %>% 
-  kableExtra::kable_styling(latex_options = c("hold_position"))
-# pander::pander(caption="Coefficients for Player-Level Variables from (3)")
-
-```
-
-Table 5 displays the exponentiated coefficient values for the 3 player-level variables, $\Delta_{ijk}CP$, $\Delta_{ijk}MS$ and $\Delta_{ijk}lastPlayTime$, as well as the interaction between $\Delta_{ijk}CP$ and $\Delta_{ijk}MS$. We see that all coefficients, except for $\Delta_{ijk}lastPlayTime$, are significant features when determining a team composition's overall rank. Thus, for every increase in the difference in total champion points from team $i$ to that of team $j$, we expect the odds of winning the game to multiply by a factor of 1.024 (1.013, 1.035), while for every increase in the difference in total mastery score from team $i$ to that of team $j$, we expect the odds of winning the game to multiply by a factor of 0.983 (0.971, 0.996). 
-
-The first takeaway is as expected. If team $i$ consists of players that have more experience playing their 5 champions than the players on team $j$, we expect team $i$ to have a slightly higher chance of winning. However, the second takeaway may be surprising at first, but is also expected. Recall that *totalChampionMasteryScore* is the sum of a player's *championPoints*. For example, consider hypothetical player X, who has played champions Lee Sin, Zac, and Graves. Player X has played Lee Sin and Zac extensively, but has rarely played Graves. Player X will have a high *totalChampionMasteryScore* and *championPoints* for Lee Sin and Zac, but a low *championPoints* for Graves. In game $k$, Player X, who is on team $i$, decides to play Graves. Assume that because of Player X's experience playing Lee Sin and Zac, team $i$'s aggregate *totalChampionMasteryScore* is much higher than that of their oppponent, team $j$. However, team $i$ may be more likely to lose the game simply because Player X is not an experienced Graves player. 
-
 ```{r}
 latex_predictors <- c("$\\Delta_{ijk}$CP", "$\\Delta_{ijk}MS$", "$\\Delta_{ijk}lastPlayTime$", "$\\Delta_{ijk}CP$ * $\\Delta_{ijk}MS$")
 gather_draws(ga_1_1_interactions, beta[i]) %>% 
@@ -650,17 +624,26 @@ gather_draws(ga_1_1_interactions, beta[i]) %>%
   filter(i > 382) %>%
   mutate(param = ifelse(is.na(i), .variable, paste0("beta","[", i, "]"))) %>% 
   group_by(param) %>% 
-  summarise(mean = mean(.value) %>% exp() %>% round(3),
-            lower = quantile(.value, .025) %>% exp()%>% round(3),
-            upper = quantile(.value, 0.975) %>% exp()%>% round(3)) %>% 
+  summarise(mean = mean(.value) %>% round(3),
+            exp_mean = mean(.value) %>% exp() %>% round(3),
+            lower = quantile(.value, .025) %>% exp() %>% round(3),
+            upper = quantile(.value, 0.975) %>% exp() %>% round(3)) %>% 
   mutate(`95% CI` = paste0("(", lower, ", ", upper, ")") %>% stringr::str_trim(),
          param = latex_predictors,
-         Parameter = param,
-         Estimate = mean) %>% 
-  select(Parameter,  Estimate,  `95% CI`) %>% 
-  pander::pander(caption="Coefficients for Player-Level Variables from (3)")
+         Predictor = param,
+         Estimate = exp_mean,
+         `Log Estimate` = mean) %>% 
+  select(Predictor, `Log Estimate`, Estimate, `95% CI`) %>% 
+  pander(caption = "Coefficients for Player-Level Variables from (3)")
+  # kableExtra::kable(caption = "Coefficients for Player-Level Variables from (3)", 
+  #                   booktabs = TRUE, align = "c") %>% 
+  # kableExtra::kable_styling()
+
 ```
 
+Table 5 displays the exponentiated coefficient values for the 3 player-level variables, $\Delta_{ijk}CP$, $\Delta_{ijk}MS$ and $\Delta_{ijk}lastPlayTime$, as well as the interaction between $\Delta_{ijk}CP$ and $\Delta_{ijk}MS$. We see that all coefficients, except for $\Delta_{ijk}lastPlayTime$, are significant features when determining a team composition's overall rank. Thus, for every increase in the difference in total champion points from team $i$ to that of team $j$, we expect the odds of winning the game to multiply by a factor of $e^{0.024 + 0.016 \Delta_{ijk}MS}$. If $\Delta_{ijk}MS$ is held constant, then we expect a multiplicative increase in odds of 1.024 (1.013, 1.035). This result is as expected - if team $i$ consists of players that have more experience playing their 5 champions than the players on team $j$, we expect team $i$ to have a slightly higher chance of winning. 
+
+In addition, for every increase in the difference in total mastery score from team $i$ to that of team $j$, we expect the odds of winning the game to multiply by a factor of $e^{-0.017 + 0.016 \Delta_{ijk}CP}$. If $\Delta_{ijk}CP$ is held constant, then we expect a multiplicative increase in odds of 0.983 (0.971, 0.996). Thus, holding each team's experience on the champions they are playing fixed, increasing team $i$'s  experience on champions they are *not* playing decreases team $i$'s chances of winning the game. This may be surprising result at first. However, recall that *totalChampionMasteryScore* is the sum of a player's *championPoints*. For example, consider hypothetical player X, who has played champions Lee Sin, Zac, and Renekton Player X has played Lee Sin and Zac extensively, but has rarely played Renekton. Player X will have a high *totalChampionMasteryScore* and *championPoints* for Lee Sin and Zac, but a low *championPoints* for Renekton. In game $k$, Player X, who is on team $i$, decides to play Renekton. Assume that because of Player X's experience playing Lee Sin and Zac, team $i$'s aggregate *totalChampionMasteryScore* is much higher than that of their oppponent, team $j$. However, team $i$ may be more likely to lose the game simply because Player X is not an experienced Renekton player. Thus, this result  suggests that someone on team  $i$ is  playing an off-role champion or are over-confident in their abilities on a champion they do not have much experience with. 
 
 These results suggest that more overall experience playing the game (a higher *totalChampionMasteryScore*) is **not** as important as gaining experience playing specific champions (a higher *championPoints*). Thus solo-queue players may have a higher chance of winning when playing champions they have more experience with. 
 
@@ -791,6 +774,9 @@ simulation_v1 <- rbinom(100000, 1, pi_sim1) %>%
   select(winner, `Comp ID`, n, prop_win, simulation)
 ```
 
+Figure 7 displays the actual and simulated outcomes of games between team composition 55 vs. 75. These two team compositions are the most played: team 55 has been played 4,214 times while team 75 has been played 3,420 times. These two teams also have the most head to head games, 191. Out of these 191 games, team composition 55 won 93, or 48.691%, of its games. The estimated value of $\pi_{(55, 75)}$ is `r pi_sim1 %>% round(3)`. From 100,000 simulated games, team composition 55 won `r  simulation_v1 %>% filter(winner == "Controller, Fighter, Fighter, Mage, Marksman") %>% pull(prop_win)%>% {.*100} %>% round(3)`% of its games. The proportions of the actual and simulated game outcomes are very similar - this indicates that our model performs well for matchups that have occured multiple times in the dataset. 
+
+
 ```{r sim-games-EDA1, fig.height=4, fig.align = 'center'}
 bind_rows(
   actual_v1,
@@ -812,8 +798,6 @@ bind_rows(
   theme(plot.caption = element_text(hjust = 0.5, vjust = 4, size = 10),
         plot.subtitle = element_text(size = 8))
 ```
-
-Figure 7 displays the actual and simulated outcomes of games between team composition 55 vs. 75. These two team compositions are the most played: team 55 has been played 4,214 times while team 75 has been played 3,420 times. These two teams also have the most head to head games, 191. Out of these 191 games, team composition 55 won 93, or 48.691%, of its games. The estimated value of $\pi_{(55, 75)}$ is `r pi_sim1 %>% round(3)`. From 100,000 simulated games, team composition 55 won `r  simulation_v1 %>% filter(winner == "Controller, Fighter, Fighter, Mage, Marksman") %>% pull(prop_win)%>% {.*100} %>% round(3)`% of its games. The proportions of the actual and simulated game outcomes are very similar - this indicates that our model performs well for matchups that have occured multiple times in the dataset. 
 
 
 ```{r}
@@ -847,6 +831,8 @@ simulation_v2 <- rbinom(100000, 1, pi_sim2) %>%
   select(winner, `Comp ID`, n, prop_win, simulation)
 ```
 
+Figure 8 displays the actual and simulated outcomes of games between team composition 181 vs. 232. These two team compositions are not as commonly played - they only have 9 head to head matches. Out of these 9 games, team composition 181 won 6, or 66.667%, of its games. The estimated value of $\pi_{(181, 232)}$ is `r pi_sim2 %>% round(3)`. From 100,000 simulated games, team composition 181 won `r simulation_v2 %>% filter(winner == "Fighter, Fighter, Mage, Mage, Marksman") %>% pull(prop_win)%>% {.*100} %>% round(3)`% of its games. The proportions of the actual and simulated game outcomes are not similar for this situation - this is primarily due to the small number of actual head to head games between these two teams. This indicates that the model can struggle to properly estimate the strength ($\lambda_i$) of teams that are not commonly played. 
+
 ```{r sim-games-EDA2, fig.height=4, fig.align = 'center'}
 bind_rows(
   actual_v2,
@@ -869,7 +855,6 @@ bind_rows(
         plot.subtitle = element_text(size = 8))
 ```
 
-Figure 8 displays the actual and simulated outcomes of games between team composition 181 vs. 232. These two team compositions are not as commonly played - they only have 9 head to head matches. Out of these 9 games, team composition 181 won 6, or 66.667%, of its games. The estimated value of $\pi_{(181, 232)}$ is `r pi_sim2 %>% round(3)`. From 100,000 simulated games, team composition 181 won `r simulation_v2 %>% filter(winner == "Fighter, Fighter, Mage, Mage, Marksman") %>% pull(prop_win)%>% {.*100} %>% round(3)`% of its games. The proportions of the actual and simulated game outcomes are not similar for this situation - this is primarily due to the small number of actual head to head games between these two teams. This indicates that the model can struggle to properly estimate the strength ($\lambda_i$) of teams that are not commonly played. 
 
 
 # Discussion  
@@ -1028,6 +1013,8 @@ display_ranking_betas(matches, ga_1_1_interactions, 1, 382) %>%
 
 The second set of four champions is Controller, Fighter, Marksman and Slayer. Table 10 displays the rankings of the 7 different team compositions that contain this set of four champions. As last pick, the best two classes to select would be a Specialist and Fighter - these also correspond with the top 2 ranked team compositions. A last pick Controller or Mage also creates strong teams, but their strength ($\lambda_i$) are slightly lower than that of the top 2 picks. The worst last pick, a Marksman, is ranked 322nd overall. This could be because double Marksman compositions are hard to execute, and solo-queue players may not have enough synergy or communication to execute this type of composition. 
 
+It is worth noting the differences between the optimal first and last picks. For example, Tanks are the weakest first pick but move up to the 5th best last pick. This can be deceiving, but note that the team composition with a last pick Tank is ranked 10th overall. In addition, Marksman are a relatively strong first pick, but seem to perform very poorly in a team composition when it is the last  pick. 
+
 # Conclusion & Limitations
 
 This paper utilized a hierarchical Bayesian logistic regression model (a reduction of the Bradley-Terry model) to form a team composition ranking system. It also provides an insight into which player-level statistics are the most significant features when determining a team composition's overall rank.
@@ -1079,47 +1066,6 @@ c). **Champion Role** - Top, Jungle, Middle, Bottom, or Support, where the Botto
 ## Inconsistencies with Data 
 
 Teams consist of 5 players, each with a unique role - Top, Jungle, Mid, Bot, and Support. There are games where players' roles were either missing or recorded as *none*. In addition, Bot laners were initially labeled as one of three categories: *duo\_carry*, *duo\_support* and *duo*. The first two refer to the Bot and Support roles respectively, while *duo* does not clearly differentiate between Bot and Support. I decided not to impute any missing or inconsistent data. Since champions can hypothetically be played in any role, imputation may not take that into consideration and could bring unwanted variability to the results. Thus, I removed games where any player's role is missing or recorded as *none* or *duo*. This process results in the final dataset, which contains 31,909 games.
-
-## Full Team Composition Rankings
-
-```{r display full rank}
-display_ranking_betas(matches, ga_1_1_interactions, 1, 45) %>% 
-  kableExtra::kable(caption = "Team Compositions Ranked by Strength, $\\hat{\\lambda}_i$, from (3)", 
-                    booktabs = TRUE, align = "c")  %>% 
-  kableExtra::kable_styling(font_size = 10)
-display_ranking_betas(matches, ga_1_1_interactions, 46, 90) %>% 
-  kableExtra::kable(caption = "Team Compositions Ranked by Strength, $\\hat{\\lambda}_i$, from (3)", 
-                    booktabs = TRUE, align = "c")  %>% 
-  kableExtra::kable_styling(font_size = 10)
-display_ranking_betas(matches, ga_1_1_interactions, 91, 135) %>% 
-  kableExtra::kable(caption = "Team Compositions Ranked by Strength, $\\hat{\\lambda}_i$, from (3)", 
-                    booktabs = TRUE, align = "c")  %>% 
-  kableExtra::kable_styling(font_size = 10)
-display_ranking_betas(matches, ga_1_1_interactions, 136, 180) %>% 
-  kableExtra::kable(caption = "Team Compositions Ranked by Strength, $\\hat{\\lambda}_i$, from (3)", 
-                    booktabs = TRUE, align = "c")  %>% 
-  kableExtra::kable_styling(font_size = 10)
-display_ranking_betas(matches, ga_1_1_interactions, 181, 225) %>% 
-  kableExtra::kable(caption = "Team Compositions Ranked by Strength, $\\hat{\\lambda}_i$, from (3)", 
-                    booktabs = TRUE, align = "c")  %>% 
-  kableExtra::kable_styling(font_size = 10)
-display_ranking_betas(matches, ga_1_1_interactions, 226, 270) %>% 
-  kableExtra::kable(caption = "Team Compositions Ranked by Strength, $\\hat{\\lambda}_i$, from (3)", 
-                    booktabs = TRUE, align = "c")  %>% 
-  kableExtra::kable_styling(font_size = 10)
-display_ranking_betas(matches, ga_1_1_interactions, 271, 315) %>% 
-  kableExtra::kable(caption = "Team Compositions Ranked by Strength, $\\hat{\\lambda}_i$, from (3)", 
-                    booktabs = TRUE, align = "c")  %>% 
-  kableExtra::kable_styling(font_size = 10)
-display_ranking_betas(matches, ga_1_1_interactions, 316, 360) %>% 
-  kableExtra::kable(caption = "Team Compositions Ranked by Strength, $\\hat{\\lambda}_i$, from (3)", 
-                    booktabs = TRUE, align = "c")  %>% 
-  kableExtra::kable_styling(font_size = 10)
-display_ranking_betas(matches, ga_1_1_interactions, 361, 382) %>% 
-  kableExtra::kable(caption = "Team Compositions Ranked by Strength, $\\hat{\\lambda}_i$, from (3)", 
-                    booktabs = TRUE, align = "c")  %>% 
-  kableExtra::kable_styling(font_size = 10)
-```
 
 ## Model Diagnostics 
 
@@ -1191,10 +1137,50 @@ trace2
 
 ```
 
+## Full Team Composition Rankings
 
-## Sensitivity Analysis 
+```{r display full rank}
+display_ranking_betas(matches, ga_1_1_interactions, 1, 45) %>% 
+  kableExtra::kable(caption = "Team Compositions Ranked by Strength, $\\hat{\\lambda}_i$, from (3)", 
+                    booktabs = TRUE, align = "c")  %>% 
+  kableExtra::kable_styling(font_size = 10)
+display_ranking_betas(matches, ga_1_1_interactions, 46, 90) %>% 
+  kableExtra::kable(caption = "Team Compositions Ranked by Strength, $\\hat{\\lambda}_i$, from (3)", 
+                    booktabs = TRUE, align = "c")  %>% 
+    kableExtra::kable_styling(font_size = 10)
+display_ranking_betas(matches, ga_1_1_interactions, 91, 135) %>% 
+  kableExtra::kable(caption = "Team Compositions Ranked by Strength, $\\hat{\\lambda}_i$, from (3)", 
+                    booktabs = TRUE, align = "c")  %>% 
+    kableExtra::kable_styling(font_size = 10)
+display_ranking_betas(matches, ga_1_1_interactions, 136, 180) %>% 
+  kableExtra::kable(caption = "Team Compositions Ranked by Strength, $\\hat{\\lambda}_i$, from (3)", 
+                    booktabs = TRUE, align = "c")  %>% 
+    kableExtra::kable_styling(font_size = 10)
+display_ranking_betas(matches, ga_1_1_interactions, 181, 225) %>% 
+  kableExtra::kable(caption = "Team Compositions Ranked by Strength, $\\hat{\\lambda}_i$, from (3)", 
+                    booktabs = TRUE, align = "c")  %>% 
+    kableExtra::kable_styling(font_size = 10)
+display_ranking_betas(matches, ga_1_1_interactions, 226, 270) %>% 
+  kableExtra::kable(caption = "Team Compositions Ranked by Strength, $\\hat{\\lambda}_i$, from (3)", 
+                    booktabs = TRUE, align = "c")  %>% 
+    kableExtra::kable_styling(font_size = 10)
+display_ranking_betas(matches, ga_1_1_interactions, 271, 315) %>% 
+  kableExtra::kable(caption = "Team Compositions Ranked by Strength, $\\hat{\\lambda}_i$, from (3)", 
+                    booktabs = TRUE, align = "c")  %>% 
+    kableExtra::kable_styling(font_size = 10)
+display_ranking_betas(matches, ga_1_1_interactions, 316, 360) %>% 
+  kableExtra::kable(caption = "Team Compositions Ranked by Strength, $\\hat{\\lambda}_i$, from (3)", 
+                    booktabs = TRUE, align = "c")  %>% 
+    kableExtra::kable_styling(font_size = 10)
+display_ranking_betas(matches, ga_1_1_interactions, 361, 382) %>% 
+  kableExtra::kable(caption = "Team Compositions Ranked by Strength, $\\hat{\\lambda}_i$, from (3)", 
+                    booktabs = TRUE, align = "c")  %>% 
+    kableExtra::kable_styling(font_size = 10)
+```
 
 ```{r fig.align="center", fig.height=4.3, eval=FALSE}
+## Sensitivity Analysis 
+
 #In Figure 6 in the Apendix, I explore the posterior distributions of $\lambda_{89}$ across different priors on $\sigma^2_{comp}$. The blue lines indicate the posterior mean of $\lambda_{89}$, `r post_mean_lambda89 %>% round(3)`, estimated from (3). The posterior distributions appear to be roughly consistent across different priors. 
 
 sen_analysis_priors_names <- c("Ga(1, 1))",
